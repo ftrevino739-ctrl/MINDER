@@ -52,8 +52,8 @@ def is_configured() -> bool:
 
 
 def get_assistant_name() -> str:
-    """Return the configured assistant name, or 'JARVIS' if not set."""
-    return load_api_keys().get("assistant_name", "JARVIS") or "JARVIS"
+    """Return the configured assistant name, or 'MINDER' if not set."""
+    return load_api_keys().get("assistant_name", "MINDER") or "MINDER"
 
 
 def get_user_name() -> str:
@@ -70,7 +70,7 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             data = {}
-    data["assistant_name"] = assistant_name.strip() or "JARVIS"
+    data["assistant_name"] = assistant_name.strip() or "MINDER"
     data["user_name"] = user_name.strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -467,7 +467,7 @@ def get_provider_mode() -> str:
     """Which engine holds the conversation. Defaults to Gemini Live."""
     mode = str(get_providers().get("mode", "") or "").strip().lower()
     return mode if mode in (PROVIDER_MODE_GEMINI, PROVIDER_MODE_PIPELINE) \
-        else PROVIDER_MODE_GEMINI
+        else PROVIDER_MODE_PIPELINE
 
 
 def get_provider_config(provider_id: str) -> dict:
