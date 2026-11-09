@@ -1,5 +1,5 @@
 """
-MARK LIV — one-time setup.
+MINDER — one-time setup.
 
 Installs the Python dependencies for THIS operating system only: the OS-specific
 packages in requirements.txt carry `sys_platform` markers, so a macOS or Linux
@@ -47,7 +47,7 @@ def _check_python() -> None:
               f"{MAX_PY[0]}.{MAX_PY[1]} and run setup with that.")
         return
     if v < MIN_PY:
-        print(f"\n❌ Python {v[0]}.{v[1]} detected — MARK LIV needs at "
+        print(f"\n❌ Python {v[0]}.{v[1]} detected — MINDER needs at "
               f"least Python {MIN_PY[0]}.{MIN_PY[1]}.")
         print("   Install a supported version and run setup with it, e.g.:")
         print(f"     py -{MIN_PY[0]}.{MIN_PY[1]} setup.py        (Windows)")
@@ -67,7 +67,7 @@ def _check_assets() -> None:
 
 
 def main() -> None:
-    print(f"⚙  MARK LIV setup — detected OS: {OS or 'unknown'}, "
+    print(f"⚙  MINDER setup — detected OS: {OS or 'unknown'}, "
           f"Python {sys.version_info[0]}.{sys.version_info[1]}")
     _check_python()
 
@@ -121,8 +121,8 @@ def main() -> None:
 
     print("\n✅ Setup complete!")
     print("   1) Launch it:  python main.py")
-    print("   2) Paste your free Gemini API key when the setup screen appears.")
-    print("   3) (Optional) Enable 'Hey Jarvis' from ⚙ → WAKE WORD.")
+    print("   2) Open ENGINE & PROVIDERS and configure your preferred LLM, speech recognition and voice provider.")
+    print("   3) (Optional) Enable the optional wake-word detector from ⚙ → WAKE WORD (its pretrained phrase is still “Hey Jarvis”).")
 
 
 if __name__ == "__main__":
