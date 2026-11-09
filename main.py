@@ -2287,7 +2287,7 @@ class JarvisLive:
             from memory.config_manager import get_provider_mode
             return get_provider_mode()
         except Exception:
-            return "gemini"
+            return "pipeline"
 
     def _resolve_engine_caps(self):
         """What the chosen engine can do — or None for Gemini Live.
@@ -2336,13 +2336,13 @@ class JarvisLive:
             caps["audio_out"] = bool(str(pipe.get("tts") or "").strip())
             return caps
         except Exception as e:
-            # A local engine that will not start must never mean no assistant.
-            # Falling back to Live is the whole reason the ladder exists, and
-            # the reason is said out loud rather than left in a console.
-            self.ui.write_log(f"SYS: local engine unavailable ({e}) — "
-                              f"using Gemini Live.")
-            print(f"[MINDER] Pipeline engine unavailable: {e}")
-            return None
+            self.ui.write_log(
+                f"ERR: MINDER provider setup required ({e}). "
+                "No audio or screen data will be sent to Gemini. "
+                "Open ENGINE & PROVIDERS and configure an LLM."
+            )
+            print(f"[MINDER] Provider setup required: {e}")
+            raise RuntimeError(f"MINDER provider setup required: {e}") from e
 
     @asynccontextmanager
     async def _open_session(self, live_model: str, config):
@@ -2598,6 +2598,13 @@ class JarvisLive:
                     continue
 
                 err_str = str(e)
+                # MINDER never silently falls back to Gemini. Remain idle until
+                # an LLM is configured; microphone and screen data stay local.
+                if (self._engine_mode() == "pipeline"
+                        and "MINDER provider setup required" in err_str):
+                    self.ui.set_state("SLEEPING")
+                    await asyncio.sleep(30)
+                    continue
                 print(f"[MINDER] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
