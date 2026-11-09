@@ -335,7 +335,7 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are MINDER, a personal desktop AI assistant. You are not a fictional character. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
@@ -1123,10 +1123,10 @@ class JarvisLive:
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
-            self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
+            self._asst_name = (_cfg.get("assistant_name") or "MINDER").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
         except Exception:
-            self._asst_name = "JARVIS"
+            self._asst_name = "MINDER"
             _user_name = ""
 
         memory     = load_memory()
@@ -2600,6 +2600,15 @@ class JarvisLive:
                 err_str = str(e)
                 print(f"[JARVIS] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
+
+                # MINDER never silently falls back to Gemini. Until an LLM is
+                # configured in ENGINE & PROVIDERS, remain idle and keep all
+                # microphone/screen data on this machine.
+                if (self._engine_mode() == "pipeline"
+                        and "MINDER provider setup required" in err_str):
+                    self.ui.set_state("SLEEPING")
+                    await asyncio.sleep(30)
+                    continue
 
                 # Out of quota, or this model is not available to this key —
                 # step down the ladder and reconnect straight away. This is the
