@@ -508,7 +508,7 @@ def save_provider_mode(mode: str) -> None:
     mode = (mode or "").strip().lower()
     _patch_providers(mode=mode if mode in (PROVIDER_MODE_GEMINI,
                                            PROVIDER_MODE_PIPELINE)
-                     else PROVIDER_MODE_GEMINI)
+                     else PROVIDER_MODE_PIPELINE)
 
 
 def save_provider_config(provider_id: str, values: dict) -> None:
@@ -603,7 +603,7 @@ def save_providers(mode: str = None, pipeline: dict = None, creds: dict = None,
     if mode is not None:
         m = str(mode).strip().lower()
         block["mode"] = m if m in (PROVIDER_MODE_GEMINI,
-                                   PROVIDER_MODE_PIPELINE) else PROVIDER_MODE_GEMINI
+                                   PROVIDER_MODE_PIPELINE) else PROVIDER_MODE_PIPELINE
     if pipeline is not None:
         current = block.get("pipeline")
         current = dict(current) if isinstance(current, dict) else {}
