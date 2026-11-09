@@ -3,13 +3,13 @@
 
 > 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
 
-MINDER is a voice-first desktop assistant built from the MINDER codebase. It can hear, speak, see, use tools and control supported parts of your computer. The default conversation engine is a configurable STT → LLM → TTS provider pipeline; Gemini Live is optional and is never used as a silent fallback.
+MINDER is a voice-first desktop assistant built from the Mark LVI codebase. It can hear, speak, see, use tools and control supported parts of your computer. The default conversation engine is a configurable STT → LLM → TTS provider pipeline; Gemini Live is optional and is never used as a silent fallback.
 
 ---
 
 ## ✨ Overview
 
-MINDER builds on the MINDER project by FatihMakes. This repository is an independent rebrand/adaptation, not a fork. Original attribution and the upstream non-commercial license are retained.
+MINDER is an independent rebrand/adaptation of Mark LVI by FatihMakes, not a fork. Original attribution and the upstream non-commercial license are retained.
 
 Until now this was a Gemini assistant, and only that. If you had no quota left, no
 connection, or a rule that says your microphone does not leave the building, you
