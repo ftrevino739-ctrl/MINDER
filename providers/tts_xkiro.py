@@ -78,7 +78,10 @@ class XKiroTTS:
                 "Install it with: python -m pip install av"
             )
         from .tts_elevenlabs import _decode_mp3
-        return await asyncio.to_thread(_decode_mp3, data)
+        pcm = await asyncio.to_thread(_decode_mp3, data)
+        if not pcm:
+            raise RuntimeError("xKiro returned an empty or invalid MP3 audio response.")
+        return pcm
 
     async def speak(self, text: str, voice: str = "", language: str = "") -> AsyncIterator[bytes]:
         import httpx
