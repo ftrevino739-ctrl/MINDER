@@ -1080,6 +1080,7 @@ def test_first_run_setup_overlay():
     section("[20] First-run setup follows the selected engine")
     try:
         from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QCoreApplication, QEvent
         import ui as UI
         from memory import config_manager as CM
     except Exception as e:
@@ -1105,6 +1106,11 @@ def test_first_run_setup_overlay():
                   str(pipeline_results))
             pipeline_overlay.close()
             pipeline_overlay.deleteLater()
+            # Process deferred Qt destruction before creating the next top-level
+            # overlay; this keeps the offscreen CI platform from retaining a
+            # deleted QWidget across two independent dialog lifetimes.
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            app.processEvents()
 
             CM.save_provider_mode("gemini")
             gemini_overlay = UI.SetupOverlay()
@@ -1124,6 +1130,7 @@ def test_first_run_setup_overlay():
                   str(gemini_results))
             gemini_overlay.close()
             gemini_overlay.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
             app.processEvents()
 
             # The first-run handler must merge OS setup into the existing file,
