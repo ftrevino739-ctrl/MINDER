@@ -49,6 +49,8 @@ except Exception as _e:            # noqa: BLE001 - reported, never fatal
     HAVE_VIDEO = False
     print(f"[Video] playback unavailable ({_e}) — the HUD will not show video.")
 
+from core.confirm import MAX_DETAIL_CHARS as _MAX_CONFIRM_DETAIL_CHARS
+
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
@@ -2073,6 +2075,7 @@ class ConfirmBanner(_HudOverlay):
         lay.addWidget(hdr)
 
         ttl = QLabel(title)
+        ttl.setTextFormat(Qt.TextFormat.PlainText)
         ttl.setWordWrap(True)
         ttl.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         ttl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
@@ -2080,10 +2083,39 @@ class ConfirmBanner(_HudOverlay):
 
         if detail:
             dtl = QLabel(detail)
+            # Confirmation content is untrusted user/model text. Render it
+            # literally so HTML-like message bodies cannot hide or restyle text.
+            dtl.setTextFormat(Qt.TextFormat.PlainText)
             dtl.setWordWrap(True)
+            dtl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             dtl.setFont(QFont("Courier New", 8))
             dtl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
-            lay.addWidget(dtl)
+            if len(detail) > 300:
+                # Long messages must be reviewable in full before approval.
+                # Keep the banner compact and put the complete body in a
+                # vertically scrollable area instead of clipping its contents.
+                scroll = QScrollArea()
+                scroll.setWidgetResizable(True)
+                scroll.setFrameShape(QFrame.Shape.NoFrame)
+                scroll.setHorizontalScrollBarPolicy(
+                    Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+                )
+                scroll.setVerticalScrollBarPolicy(
+                    Qt.ScrollBarPolicy.ScrollBarAsNeeded
+                )
+                scroll.setFixedHeight(164)
+                scroll.setStyleSheet(
+                    "QScrollArea { background: transparent; border: none; }"
+                )
+                body = QWidget()
+                body_layout = QVBoxLayout(body)
+                body_layout.setContentsMargins(0, 0, 0, 0)
+                body_layout.setSpacing(0)
+                body_layout.addWidget(dtl)
+                scroll.setWidget(body)
+                lay.addWidget(scroll)
+            else:
+                lay.addWidget(dtl)
 
         row = QHBoxLayout(); row.setSpacing(8)
 
@@ -7361,7 +7393,14 @@ class JarvisUI:
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action
         handlers running in executor threads, so it goes through a signal."""
-        self._win._confirm_sig.emit(str(title)[:120], str(detail)[:300])
+        detail_text = str(detail)
+        if len(detail_text) > _MAX_CONFIRM_DETAIL_CHARS:
+            # core.confirm.request catches this and refuses the action. Never
+            # show a truncated approval summary for an irreversible operation.
+            raise ValueError(
+                f"confirmation detail exceeds {_MAX_CONFIRM_DETAIL_CHARS} characters"
+            )
+        self._win._confirm_sig.emit(str(title)[:120], detail_text)
 
     def hide_confirm(self) -> None:
         """Thread-safe: take the gate down."""

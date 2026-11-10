@@ -355,15 +355,24 @@ def send_message(
     # A message is an external, effectively irreversible action. The model
     # cannot approve its own tool call: the exact recipient, platform and full
     # message are shown on the HUD, and only the human CONFIRM button invokes
-    # the sender. If the UI is unavailable, confirm.request fails closed.
+    # the sender. Never allow the UI to clip the content being approved.
+    detail = (
+        f"Platform: {platform}\n"
+        f"Recipient: {receiver}\n\n"
+        f"Exact message:\n{message_text}"
+    )
+    if len(detail) > confirm.MAX_DETAIL_CHARS:
+        return outcome.failed(
+            "send_message",
+            f"the message is too long to display in full for safe approval "
+            f"(maximum review length: {confirm.MAX_DETAIL_CHARS} characters); "
+            f"shorten it before sending",
+            platform=platform, to=receiver,
+        )
     return confirm.request(
         key="send-message",
         title=f"Send {platform} message to {receiver}",
-        detail=(
-            f"Platform: {platform}\n"
-            f"Recipient: {receiver}\n\n"
-            f"Exact message:\n{message_text}"
-        ),
+        detail=detail,
         run=lambda: _send_and_report(player, platform, receiver, message_text),
     )
 

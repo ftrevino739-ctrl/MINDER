@@ -45,6 +45,9 @@ from typing import Callable, Optional
 # shutdown button sitting on the HUD for the rest of the day.
 TIMEOUT_SECONDS = 90.0
 
+# Maximum visible confirmation detail. Oversized requests fail closed.
+MAX_DETAIL_CHARS = 12_000
+
 
 @dataclass
 class _Pending:

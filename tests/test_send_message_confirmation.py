@@ -72,6 +72,30 @@ class SendMessageConfirmationTests(unittest.TestCase):
         request.assert_not_called()
         send.assert_not_called()
 
+    def test_oversized_message_is_rejected_instead_of_truncated_for_approval(self) -> None:
+        captured = {}
+        parameters = {
+            "receiver": "Alex",
+            "platform": "WhatsApp",
+            "message_text": "x" * (send_message_module.confirm.MAX_DETAIL_CHARS + 1),
+        }
+
+        with (
+            patch.object(send_message_module, "_PYAUTOGUI", True),
+            patch.object(send_message_module.confirm, "pending_title", return_value=""),
+            patch.object(
+                send_message_module.confirm, "request",
+                side_effect=lambda **kwargs: captured.update(kwargs) or "pending",
+            ) as request,
+            patch.object(send_message_module, "_send_and_report") as send,
+        ):
+            result = send_message_module.send_message(parameters)
+
+        self.assertIn("too long to display in full", result)
+        request.assert_not_called()
+        send.assert_not_called()
+        self.assertEqual(captured, {})
+
     def test_missing_confirmation_ui_fails_closed(self) -> None:
         with (
             patch.object(send_message_module, "_PYAUTOGUI", True),
