@@ -1254,6 +1254,58 @@ def test_web_search_honors_selected_engine():
               web_search._gemini_available())
 
 
+def test_xkiro_model_catalog_shows_access_tiers():
+    """Do not make a paid model look like a free one in the model picker."""
+    from providers.llm_openai import CATALOG, PRESETS, OpenAICompatLLM
+    section("[24] xKiro shows live model access tiers")
+    entry = next((item for item in CATALOG if item.get("id") == "xkiro"), None)
+    check("xKiro is a first-class provider preset",
+          entry is not None
+          and PRESETS.get("xKiro") == "https://api.xkiro.com/v1"
+          and entry.get("values", {}).get("base_url") == PRESETS["xKiro"])
+    client = OpenAICompatLLM.__new__(OpenAICompatLLM)
+    client.base = "https://api.xkiro.com/v1"
+    rows = [
+        {
+            "id": "mistralai/mistral-small-2603",
+            "display_name": "Mistral Small 4",
+            "access_tier": "free",
+            "context_length": 256000,
+            "capabilities": {"tools": True, "vision": True, "reasoning": True},
+        },
+        {
+            "id": "provider/paid-model",
+            "display_name": "Paid Model",
+            "access_tier": "paid",
+            "capabilities": {"tools": True},
+        },
+        {
+            "id": "provider/premium-model",
+            "display_name": "Premium Model",
+            "access_tier": "premium",
+            "capabilities": {},
+        },
+    ]
+    client._model_rows = lambda timeout=8.0: rows
+    options = dict(client.model_options())
+    free_label = options["mistralai/mistral-small-2603"]
+    check("xKiro free model is clearly labelled FREE",
+          "FREE" in free_label and "Mistral Small 4" in free_label)
+    check("tool and vision capabilities are shown",
+          "TOOLS" in free_label and "VISION" in free_label)
+    check("the model context length is shown",
+          "256K CONTEXT" in free_label)
+    check("paid model is not presented as free",
+          "PAID" in options["provider/paid-model"])
+    check("premium model is distinguished from paid/free",
+          "PREMIUM" in options["provider/premium-model"])
+
+    client.base = "https://api.groq.com/openai/v1"
+    regular = dict(client.model_options())
+    check("other OpenAI-compatible providers keep their plain model labels",
+          regular["mistralai/mistral-small-2603"] == "mistralai/mistral-small-2603")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 async def main() -> int:
     print("providers self-test")
@@ -1280,6 +1332,7 @@ async def main() -> int:
     test_pipeline_one_shot_requests_never_fall_back_to_gemini()
     test_coding_projects_use_minder_workspace()
     test_web_search_honors_selected_engine()
+    test_xkiro_model_catalog_shows_access_tiers()
 
     print(f"\n{'=' * 56}")
     print(f"{_ok} passed, {_fail} failed")
