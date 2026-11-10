@@ -30,10 +30,10 @@ Target development machine: Windows 11 with 8 GB RAM.
 ## Implementation phases
 
 1. **Foundation — completed:** import the source independently, preserve attribution/license, establish CI, and apply MINDER identity to core defaults and desktop integration.
-2. **Provider setup — in progress:** make the provider pipeline the default, allow first-run setup without a Gemini key, preserve existing config, test provider configuration, and connect a user-selected LLM/STT/TTS stack. Exact providers and models still need selection and measured latency checks.
+2. **Provider setup — foundation in place; provider selection pending:** the provider pipeline is the default, first-run no longer needs a Gemini key, existing config is preserved, and both conversation turns and one-shot helpers stay on the selected LLM without silently falling back to Gemini. Coding jobs use the explicit CODING provider or the active pipeline LLM. A real endpoint/model/voice combination and measured latency still need to be selected.
 3. **Voice experience — pending:** tune microphone selection, push-to-talk, interruption, latency, and the chosen voice. Keep the pretrained “Hey Jarvis” detector disabled until a genuine MINDER wake-word model exists.
 4. **Desktop actions — pending audit:** verify application control, browser automation, file operations, permissions, confirmations, and undo on Windows.
-5. **Interface — pending:** progressively replace the inherited HUD styling with the MINDER visual system, including restrained Liquid Glass materials, while keeping functionality intact.
+5. **Interface — in progress:** applied the MINDER midnight-slate palette and first frosted-glass treatment to onboarding and ENGINE & PROVIDERS, including translucent surfaces, soft shadow, rounded controls and revised typography. Other inherited HUD panels still need a staged visual audit.
 6. **Reliability and release — in progress:** expand automated tests, error recovery and logging; then validate, package, and document a repeatable Windows installation path.
 
 ## Current repository state
@@ -43,10 +43,11 @@ Target development machine: Windows 11 with 8 GB RAM.
 - The provider pipeline is the default engine. Gemini Live is only selected explicitly.
 - First-run setup no longer blocks a pipeline install on a Gemini API key. A Gemini key is required only when Gemini Live is selected.
 - Completing first-run setup preserves existing entries in `config/api_keys.json` instead of replacing the entire file with two fields.
-- Pipeline failures are kept out of Gemini's model-quota retry and Gemini key reconfiguration logic. There is no automatic provider-to-Gemini fallback.
-- CI checks Python syntax on 3.11, 3.12 and 3.13; it also runs provider-mode tests and a Qt-offscreen provider regression suite. The last verified full run passed 102 provider checks and all three syntax/test matrix jobs.
+- Pipeline failures are kept out of Gemini's model-quota retry and Gemini key reconfiguration logic. All one-shot helper calls and selected coding-provider calls are also provider-only in pipeline mode; a missing or failed selected LLM never silently falls through to Gemini.
+- The built-in Gemini-grounded Search tier is deliberately unavailable in provider mode for now; the code returns no result rather than forwarding the query to Google. A provider-routed web-search path remains to be completed.
+- CI checks Python syntax on 3.11, 3.12 and 3.13; it also runs provider-mode tests and a Qt-offscreen provider regression suite. The last fully completed provider regression run passed 109 checks with zero failures, and the syntax matrix passed on all three versions.
 - The provider regression runner emits a non-fatal warning that multimedia playback is unavailable in the headless Linux CI environment; real audio/video devices are not tested there.
-- Provider/model/voice choices are intentionally not finalized yet.
+- Provider/model/voice choices are intentionally not finalized yet. The UI retrieves model lists from compatible endpoints; the remaining decision should be based on tool-calling compatibility, current limits, latency and measured quality rather than static marketing estimates.
 - The application has not yet been run or validated on the target Windows PC. Passing CI is not proof that the Windows app launches or that the user's microphone, speakers, browser and desktop actions work.
 
 ## Working rules
