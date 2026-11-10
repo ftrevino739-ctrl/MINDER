@@ -1313,6 +1313,44 @@ def test_xkiro_model_catalog_shows_access_tiers():
           regular["mistralai/mistral-small-2603"] == "mistralai/mistral-small-2603")
 
 
+def test_xkiro_tts_voice_and_audio_contract():
+    """xKiro speech is optional, per-character, and returns speaker-ready PCM."""
+    import asyncio
+    from providers import registry
+    from providers import audio as provider_audio
+    from providers.tts_xkiro import (
+        API, DEFAULT_MODEL, DEFAULT_VOICE, XKiroTTS, _http_message,
+    )
+    section("[25] xKiro speech provider contract")
+    declaration = registry.get_declaration("xkiro_tts")
+    check("xKiro TTS is registered as a speech provider",
+          bool(declaration) and declaration.get("kind") == "tts")
+    check("xKiro TTS uses the documented speech endpoint",
+          API == "https://api.xkiro.com/v1")
+    voice = XKiroTTS({"api_key": "test-key"})
+    check("Mexican Female is the default xKiro voice",
+          voice.voice_id == DEFAULT_VOICE == "mexican-female")
+    check("xKiro speech model is the documented model",
+          voice.model == DEFAULT_MODEL == "xkiro-voice")
+    check("speech speed is bounded to the API's supported range",
+          XKiroTTS({"api_key": "x", "speed": 99}).speed == 4.0
+          and XKiroTTS({"api_key": "x", "speed": -2}).speed == 0.25)
+    payload = voice._payload("Hola", "wav")
+    check("speech requests include the selected voice, WAV, and streamed mode",
+          payload.get("input") == "Hola"
+          and payload.get("voice") == "mexican-female"
+          and payload.get("response_format") == "wav"
+          and payload.get("stream") is True)
+    wav = provider_audio.to_wav(b"\x00\x00" * 1600, rate=16000)
+    pcm = asyncio.run(voice._decode(wav, "wav"))
+    check("WAV output is converted to 24 kHz speaker PCM",
+          len(pcm) > 0 and len(pcm) % 2 == 0)
+    check("authentication errors are explained without hiding provider status",
+          "API key" in _http_message(401, '{"error":{"message":"Invalid API key"}}'))
+    check("billing limits are reported distinctly",
+          "limit reached" in _http_message(429, '{"error":{"message":"daily limit"}}'))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 async def main() -> int:
     print("providers self-test")
@@ -1340,6 +1378,7 @@ async def main() -> int:
     test_coding_projects_use_minder_workspace()
     test_web_search_honors_selected_engine()
     test_xkiro_model_catalog_shows_access_tiers()
+    test_xkiro_tts_voice_and_audio_contract()
 
     print(f"\n{'=' * 56}")
     print(f"{_ok} passed, {_fail} failed")
