@@ -17,7 +17,18 @@ def get_base_dir():
 
 BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
-PROJECTS_DIR     = Path.home() / "Desktop" / "JarvisProjects"
+PROJECTS_DIR        = Path.home() / "Desktop" / "MINDERProjects"
+LEGACY_PROJECTS_DIR = Path.home() / "Desktop" / "JarvisProjects"
+
+def _projects_root() -> Path:
+    """Use the MINDER folder, but keep an existing Jarvis workspace in place.
+
+    Existing projects are user data: do not move, rename or overwrite them as
+    part of the application rebrand.
+    """
+    if PROJECTS_DIR.exists() or not LEGACY_PROJECTS_DIR.exists():
+        return PROJECTS_DIR
+    return LEGACY_PROJECTS_DIR
 MAX_FIX_ATTEMPTS = 5
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
 from core import gemini
@@ -52,7 +63,7 @@ def _get_model(model_name: str = gemini.SMART):
         def generate_content(self, contents):
             resp = gemini.call(contents, tier=model_name,
                                timeout_ms=180000 if provider else 60000,
-                               provider=provider)
+                               provider=provider, provider_only=bool(provider))
             if resp is None:
                 raise RuntimeError("every model on the ladder failed")
             return resp
@@ -475,8 +486,8 @@ def _build_project(
         _log(player, msg)
 
     provider = _coding_provider()
-    log(f"Coding with {provider.partition('@')[2] or provider}, Gemini as backup."
-        if provider else "Coding with the background-request models.")
+    log(f"Coding with the selected provider: {provider.partition('@')[2] or provider}."
+        if provider else "Coding with the active engine's configured LLM.")
     _update("planning")
     log("Planning project structure...")
     try:
@@ -492,7 +503,7 @@ def _build_project(
 
     proj_name    = project_name or plan.get("project_name", "jarvis_project")
     proj_name    = re.sub(r"[^\w\-]", "_", proj_name)
-    project_dir  = PROJECTS_DIR / proj_name
+    project_dir  = _projects_root() / proj_name
     project_dir.mkdir(parents=True, exist_ok=True)
 
     files        = plan.get("files", [])
@@ -1581,7 +1592,7 @@ def _start_build(description: str, language: str, project_name: str,
     name = re.sub(r"[^\w\-]", "_", project_name) if project_name else "new project"
     _job_name = name
     who = _coding_provider().partition("@")[2] or "the coding model"
-    _new_job(PROJECTS_DIR / name, who, description, player, kind="build")
+    _new_job(_projects_root() / name, who, description, player, kind="build")
     return _run_job(lambda: _build_project(description, language, project_name,
                                            timeout, speak=None, player=player),
                     name, who, speak, player)
