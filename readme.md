@@ -8,7 +8,7 @@ MINDER is a Windows-first desktop assistant adapted from [Mark LVI by FatihMakes
 
 - Personal assistant for Windows first; the inherited codebase also contains macOS and Linux paths.
 - Voice input → language model → speech output, with text interaction as a fallback.
-- Desktop automation, file operations, browser control, memory, undo and confirmation features are inherited from the source and are being audited before being treated as production-ready.
+- Desktop automation, browser control, memory, undo and confirmation features are inherited from the source and are being audited before being treated as production-ready. The first file-safety pass now prevents silent create/copy/move overwrites and requires human confirmation before replacing existing files that cannot be safely undone.
 - Provider choice must be explicit. The default engine is the configurable **MY OWN SETUP** pipeline. Main conversation turns, coding jobs and one-shot helper requests use the selected LLM; they do not silently fall back to Gemini. Gemini Live is an optional mode.
 - The MINDER interface is being restyled with a midnight-slate palette, translucent frosted-glass setup/provider panels, soft depth, rounded controls and Segoe UI typography. This is the first visual layer, not a claim that every inherited screen is finished.
 
@@ -61,7 +61,7 @@ A model worth checking first is **Mistral Small 4** (`mistralai/mistral-small-26
 
 ## Tests and verification
 
-The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 119 checks with zero failures; the latest syntax matrix passed on Python 3.11, 3.12 and 3.13. The suite also verifies that provider-pipeline one-shot requests and coding calls do not silently fall back to Gemini.
+The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode and file-operation safety tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 119 checks with zero failures; the latest syntax matrix passed on Python 3.11, 3.12 and 3.13. The suite also verifies that provider-pipeline one-shot requests and coding calls do not silently fall back to Gemini.
 
 After installing the application dependencies, the provider package also has a local regression suite:
 
