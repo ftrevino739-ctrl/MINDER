@@ -32,6 +32,14 @@ class ProviderModeDefaultsTests(unittest.TestCase):
         self.assertEqual(config_manager.get_provider_mode(), "pipeline")
         self.assertEqual(config_manager.get_pipeline(), {})
 
+    def test_fresh_install_uses_minder_identity(self) -> None:
+        self.assertEqual(config_manager.get_assistant_name(), "MINDER")
+
+    def test_legacy_hey_jarvis_wake_word_is_disabled_by_default(self) -> None:
+        # The bundled pretrained detector still listens for "Hey Jarvis".
+        # Keep it off until MINDER has its own wake-word model.
+        self.assertFalse(config_manager.get_wake_word_enabled())
+
     def test_gemini_requires_an_explicit_choice(self) -> None:
         self.assertEqual(config_manager.get_provider_mode(), "pipeline")
         config_manager.save_provider_mode("gemini")
