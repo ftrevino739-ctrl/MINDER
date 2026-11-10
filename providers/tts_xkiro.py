@@ -26,7 +26,19 @@ DEFAULT_VOICE = "mexican-female"
 
 class XKiroTTS:
     def __init__(self, cfg: dict):
-        self.key = str(cfg.get("api_key") or "").strip()
+        key = str(cfg.get("api_key") or "").strip()
+        if not key:
+            # LLM and TTS use the same xKiro account gateway. Reuse its key
+            # when the user leaves this field blank; an explicit TTS key still
+            # takes precedence for accounts that keep separate credentials.
+            try:
+                from memory.config_manager import get_provider_config
+                key = str(
+                    get_provider_config("openai_compat@xkiro").get("api_key") or ""
+                ).strip()
+            except Exception:
+                key = ""
+        self.key = key
         self.voice_id = str(cfg.get("voice_id") or DEFAULT_VOICE).strip()
         self.model = str(cfg.get("model") or DEFAULT_MODEL).strip()
         try:
@@ -201,8 +213,9 @@ PROVIDER = {
          "local": False, "values": {}},
     ),
     "needs": (
-        Field("api_key", "xKiro API key", kind="secret",
-              hint="Use your xKiro key. This is stored locally in config/api_keys.json."),
+        Field("api_key", "xKiro API key (optional)", kind="secret",
+              required=False,
+              hint="Leave blank to reuse the key saved for xKiro LLM, or enter a separate xKiro key."),
         Field("voice_id", "Voice", kind="choice", choices=(),
               default=DEFAULT_VOICE,
               hint="Press LIST to load the public voice catalogue; Mexican Female is the default."),
