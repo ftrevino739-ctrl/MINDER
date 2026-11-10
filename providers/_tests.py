@@ -1228,6 +1228,32 @@ def test_coding_projects_use_minder_workspace():
         check("legacy workspace remains in place", legacy.is_dir())
 
 
+def test_web_search_honors_selected_engine():
+    """The provider pipeline must not call Gemini grounding through web search."""
+    from unittest.mock import patch
+    from memory import config_manager as CM
+    from actions import web_search
+    section("[23] Web search follows the selected engine")
+    with patch.object(CM, "get_provider_mode", return_value="pipeline"), \
+         patch.object(web_search, "_quota_blocked_until", 0):
+        check("Gemini grounding is disabled in provider mode",
+              not web_search._gemini_available())
+        check("headlines return without querying Google",
+              web_search._gemini_headlines() == ([], ""))
+        try:
+            web_search._gemini_search("MINDER provider routing test")
+        except web_search._QuotaCooldown:
+            blocked = True
+        else:
+            blocked = False
+        check("Gemini search is blocked before any API request", blocked)
+
+    with patch.object(CM, "get_provider_mode", return_value="gemini"), \
+         patch.object(web_search, "_quota_blocked_until", 0):
+        check("Gemini grounding remains available in explicit Gemini mode",
+              web_search._gemini_available())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 async def main() -> int:
     print("providers self-test")
@@ -1253,6 +1279,7 @@ async def main() -> int:
     test_first_run_setup_overlay()
     test_pipeline_one_shot_requests_never_fall_back_to_gemini()
     test_coding_projects_use_minder_workspace()
+    test_web_search_honors_selected_engine()
 
     print(f"\n{'=' * 56}")
     print(f"{_ok} passed, {_fail} failed")
