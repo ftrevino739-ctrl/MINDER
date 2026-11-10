@@ -2598,75 +2598,85 @@ class JarvisLive:
                     continue
 
                 err_str = str(e)
-                # MINDER never silently falls back to Gemini. Remain idle until
-                # an LLM is configured; microphone and screen data stay local.
-                if (self._engine_mode() == "pipeline"
-                        and "MINDER provider setup required" in err_str):
-                    self.ui.set_state("SLEEPING")
-                    await asyncio.sleep(30)
-                    continue
-                print(f"[MINDER] Error ({type(e).__name__}): {e}")
-                traceback.print_exc()
-
-
-                # Out of quota, or this model is not available to this key —
-                # step down the ladder and reconnect straight away. This is the
-                # difference between "MINDER is quieter today" and "MINDER does
-                # not start today": one model means one daily limit, and the
-                # limit always arrives mid-conversation.
-                if _gemini.note_live_failure(live_model, err_str):
-                    nxt = _gemini.live_model()
+                engine_mode = self._engine_mode()
+                if engine_mode == "pipeline":
+                    if "MINDER provider setup required" in err_str:
+                        self.ui.set_state("SLEEPING")
+                        await asyncio.sleep(30)
+                        continue
                     self.ui.write_log(
-                        f"SYS: Switching to {nxt.split('/')[-1]} — the previous "
-                        f"model is out of quota."
-                        if nxt != live_model else
-                        "SYS: Every live model is rate-limited — retrying.")
-                    self._conn_backoff = 0 if nxt != live_model else 15
-                    if nxt == live_model:
-                        await asyncio.sleep(self._conn_backoff)
-                    continue
-
-                # Turn-taking / media / thinking knobs rejected by the server
-                # (preview API drift) — drop them first, because they are the
-                # newest fields and the cheapest to lose. Proactive audio is
-                # tried again on the next pass if the error persists.
-                if self._tuned_live and (
-                    "INVALID_ARGUMENT" in err_str
-                    or "Unknown name" in err_str
-                    or "unexpected keyword" in err_str
-                    or "realtime_input" in err_str.lower()
-                    or "media_resolution" in err_str.lower()
-                    or "thinking" in err_str.lower()
-                ):
-                    self._tuned_live = False
-                    print("[MINDER] Live tuning rejected — reconnecting without it.")
-                    continue
-
-                # Proactive audio rejected by the server (preview API drift) —
-                # drop it and reconnect with the plain config.
-                if self._enhanced_live and (
-                    "INVALID_ARGUMENT" in err_str
-                    or "proactiv" in err_str.lower()
-                    or "Unknown name" in err_str
-                    or "unexpected keyword" in err_str
-                ):
-                    self._enhanced_live = False
-                    self.ui.write_log(
-                        "SYS: Proactive audio unavailable — reconnecting without it."
+                        f"ERR: Provider pipeline failed ({type(e).__name__}): {e}. "
+                        "Check the selected services in ENGINE & PROVIDERS; "
+                        "Gemini fallback is disabled."
                     )
-                    continue
-
-                # Invalid API key — stop hammering the API, prompt re-configuration
-                if "API key not valid" in err_str or "1007" in err_str:
-                    self.ui.write_log("ERR: API key invalid — please re-enter your key.")
-                    self.ui.set_state("SLEEPING")
-                    self.ui.prompt_reconfig()
-                    while not self.ui._win._ready:
-                        await asyncio.sleep(1)
-                    print("[MINDER] New API key saved — reconnecting...")
-                    _conn_backoff = 3
-                    continue
-
+                    print(f"[MINDER] Provider pipeline error: {e}")
+                    traceback.print_exc()
+                    lowered = err_str.lower()
+                    if "401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+                        self.ui.write_log(
+                            "ERR: The selected provider rejected its credentials. "
+                            "Update that provider in ENGINE & PROVIDERS."
+                        )
+                else:
+                    print(f"[MINDER] Error ({type(e).__name__}): {e}")
+                    traceback.print_exc()
+                    # Out of quota, or this model is not available to this key —
+                    # step down the ladder and reconnect straight away. This is the
+                    # difference between "MINDER is quieter today" and "MINDER does
+                    # not start today": one model means one daily limit, and the
+                    # limit always arrives mid-conversation.
+                    if _gemini.note_live_failure(live_model, err_str):
+                        nxt = _gemini.live_model()
+                        self.ui.write_log(
+                            f"SYS: Switching to {nxt.split('/')[-1]} — the previous "
+                            f"model is out of quota."
+                            if nxt != live_model else
+                            "SYS: Every live model is rate-limited — retrying.")
+                        self._conn_backoff = 0 if nxt != live_model else 15
+                        if nxt == live_model:
+                            await asyncio.sleep(self._conn_backoff)
+                        continue
+    
+                    # Turn-taking / media / thinking knobs rejected by the server
+                    # (preview API drift) — drop them first, because they are the
+                    # newest fields and the cheapest to lose. Proactive audio is
+                    # tried again on the next pass if the error persists.
+                    if self._tuned_live and (
+                        "INVALID_ARGUMENT" in err_str
+                        or "Unknown name" in err_str
+                        or "unexpected keyword" in err_str
+                        or "realtime_input" in err_str.lower()
+                        or "media_resolution" in err_str.lower()
+                        or "thinking" in err_str.lower()
+                    ):
+                        self._tuned_live = False
+                        print("[MINDER] Live tuning rejected — reconnecting without it.")
+                        continue
+    
+                    # Proactive audio rejected by the server (preview API drift) —
+                    # drop it and reconnect with the plain config.
+                    if self._enhanced_live and (
+                        "INVALID_ARGUMENT" in err_str
+                        or "proactiv" in err_str.lower()
+                        or "Unknown name" in err_str
+                        or "unexpected keyword" in err_str
+                    ):
+                        self._enhanced_live = False
+                        self.ui.write_log(
+                            "SYS: Proactive audio unavailable — reconnecting without it."
+                        )
+                        continue
+    
+                    # Invalid API key — stop hammering the API, prompt re-configuration
+                    if "API key not valid" in err_str or "1007" in err_str:
+                        self.ui.write_log("ERR: API key invalid — please re-enter your key.")
+                        self.ui.set_state("SLEEPING")
+                        self.ui.prompt_reconfig()
+                        while not self.ui._win._ready:
+                            await asyncio.sleep(1)
+                        print("[MINDER] New API key saved — reconnecting...")
+                        _conn_backoff = 3
+                        continue
                 # Network / timeout errors — log clearly and back off
                 is_net_err = any(k in err_str for k in (
                     "TimeoutError", "timed out", "getaddrinfo", "CancelledError",
