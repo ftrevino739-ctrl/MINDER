@@ -49,13 +49,13 @@ For a Windows PC with 8 GB RAM, start with a hosted LLM rather than downloading 
 - If the pipeline has no configured LLM or its required settings are invalid, MINDER stays idle and reports that provider setup is required.
 - Main conversation and one-shot helper calls in provider mode stay on the selected LLM. A failed provider does not trigger a Gemini fallback or an implicit Gemini credential read.
 - Coding jobs use the separately selected CODING provider when configured; otherwise they use the active pipeline LLM. The coding provider is called provider-only.
-- The old built-in Gemini-grounded Search tier is not available in provider mode yet; it returns no result rather than sending the request to Google. Treat web-search as a separate feature until its provider routing is completed.
+- In provider mode, MINDER's web-search action uses the DuckDuckGo path and does not contact Gemini for grounding. Gemini-grounded search is available only after the user explicitly selects Gemini Live.
 - Gemini Live is used only after the user explicitly selects that engine and configures its credentials.
 - The bundled wake-word model still recognises **“Hey Jarvis”**. Keep wake-word detection disabled until a genuine MINDER wake-word model is available.
 
 ## Tests and verification
 
-The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 109 checks with zero failures; the latest syntax matrix passed on all three Python versions.
+The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 115 checks with zero failures; the latest syntax matrix passed on all three Python versions.
 
 After installing the application dependencies, the provider package also has a local regression suite:
 
