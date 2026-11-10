@@ -262,7 +262,7 @@ PROVIDER = {
     "hint": "Cloud speech · includes a Mexican Spanish voice · per-character billing",
     "requires": ("httpx",),
     "catalog": (
-        {"id": "xkiro", "label": "xKiro · 145 voices",
+        {"id": "xkiro", "label": "xKiro · Voice catalogue",
          "note": "cloud · per character · daily allowance varies by plan",
          "local": False, "values": {}},
     ),
