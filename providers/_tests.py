@@ -1370,6 +1370,13 @@ def test_xkiro_tts_voice_and_audio_contract():
     check("billing limits are reported distinctly",
           "limit reached" in _http_message(429, '{"error":{"message":"daily limit"}}'))
 
+    voice.voices = lambda: [("mexican-female", "Mexican Female")]
+    voice._verify_key = lambda: {"object": "usage", "plan": "free"}
+    ok, message = voice.probe()
+    check("xKiro speech probe validates credentials without generating audio",
+          ok and "Key accepted" in message and "Mexican Female" in message)
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 async def main() -> int:
