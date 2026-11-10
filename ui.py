@@ -403,7 +403,7 @@ class _SysMetrics:
 _metrics = _SysMetrics()
 
 class HudCanvas(QWidget):
-    def __init__(self, face_path: str, assistant_name: str = "J.A.R.V.I.S", parent=None):
+    def __init__(self, face_path: str, assistant_name: str = "MINDER", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setMinimumSize(300, 300)
@@ -3796,7 +3796,7 @@ class ProvidersOverlay(_HudOverlay):
 
 
 class ClipboardPanel(QWidget):
-    """Floating panel shown when text is copied — offers quick Jarvis actions."""
+    """Floating panel shown when text is copied — offers quick MINDER actions."""
 
     action_requested = pyqtSignal(str)
     _W, _H = 326, 112
@@ -4953,7 +4953,7 @@ class MainWindow(QMainWindow):
     # Icon generation — arc-reactor style, rendered with Pillow
     # ------------------------------------------------------------------
     @staticmethod
-    def _build_jarvis_icon(out_path: Path) -> bool:
+    def _build_minder_icon(out_path: Path) -> bool:
         """
         Render a MINDER arc-reactor icon at 4× resolution and downsample
         for crisp results at all sizes. Saves a multi-res .ico to out_path.
@@ -5068,7 +5068,7 @@ class MainWindow(QMainWindow):
             sc.TargetPath       = target
             sc.Arguments        = f'"{args}"'
             sc.WorkingDirectory = work_dir
-            sc.Description      = "J.A.R.V.I.S AI Assistant"
+            sc.Description      = "MINDER AI Assistant"
             sc.IconLocation     = icon_loc
             sc.save()
             return
@@ -5083,7 +5083,7 @@ class MainWindow(QMainWindow):
             f'sc.TargetPath = "{target}"',
             f'sc.Arguments = Chr(34) & "{args}" & Chr(34)',
             f'sc.WorkingDirectory = "{work_dir}"',
-            'sc.Description = "J.A.R.V.I.S AI Assistant"',
+            'sc.Description = "MINDER AI Assistant"',
             f'sc.IconLocation = "{icon_loc}"',
             'sc.Save',
         ])
@@ -5195,9 +5195,9 @@ class MainWindow(QMainWindow):
         desktop = self._get_desktop_dir()
 
         # Arc-reactor icon (.ico — also exported as .png for Linux/macOS)
-        ico_path = Path(__file__).resolve().parent / "config" / "jarvis.ico"
+        ico_path = Path(__file__).resolve().parent / "config" / "minder.ico"
         if not ico_path.exists():
-            self._build_jarvis_icon(ico_path)
+            self._build_minder_icon(ico_path)
 
         try:
             _os = platform.system()
@@ -5206,14 +5206,14 @@ class MainWindow(QMainWindow):
             if _os == "Windows":
                 pythonw  = python.parent / "pythonw.exe"
                 target   = str(pythonw if pythonw.exists() else python)
-                lnk      = str(desktop / "J.A.R.V.I.S.lnk")
+                lnk      = str(desktop / "MINDER.lnk")
                 icon_loc = str(ico_path) if ico_path.exists() else f"{target},0"
                 self._create_lnk_windows(lnk, target, str(script),
                                          str(script.parent), icon_loc)
 
             # ── macOS — proper .app bundle (no Terminal window) ───────────────
             elif _os == "Darwin":
-                app     = desktop / "J.A.R.V.I.S.app"
+                app     = desktop / "MINDER.app"
                 mac_dir = app / "Contents" / "MacOS"
                 res_dir = app / "Contents" / "Resources"
                 mac_dir.mkdir(parents=True, exist_ok=True)
@@ -5238,8 +5238,8 @@ class MainWindow(QMainWindow):
                     '<plist version="1.0"><dict>\n'
                     '  <key>CFBundleExecutable</key><string>MINDER</string>\n'
                     '  <key>CFBundleIdentifier</key>'
-                    '<string>com.jarvis.assistant</string>\n'
-                    '  <key>CFBundleName</key><string>J.A.R.V.I.S</string>\n'
+                    '<string>com.minder.assistant</string>\n'
+                    '  <key>CFBundleName</key><string>MINDER</string>\n'
                     '  <key>CFBundlePackageType</key><string>APPL</string>\n'
                     '  <key>CFBundleVersion</key><string>1.0</string>\n'
                     '</dict></plist>\n'
@@ -5277,10 +5277,10 @@ class MainWindow(QMainWindow):
                         png_path = ico_path  # fallback to .ico
 
                 icon_line = f"Icon={png_path}\n" if png_path.exists() else ""
-                desk = desktop / "J.A.R.V.I.S.desktop"
+                desk = desktop / "MINDER.desktop"
                 desk.write_text(
                     "[Desktop Entry]\n"
-                    "Name=J.A.R.V.I.S\n"
+                    "Name=MINDER\n"
                     f"Exec={python} {script}\n"
                     f"Path={script.parent}\n"
                     "Type=Application\n"
@@ -6543,10 +6543,15 @@ class MainWindow(QMainWindow):
                 finally:
                     winreg.CloseKey(key)
             elif _OS == "Darwin":
-                return (Path.home() / "Library" / "LaunchAgents"
-                        / "com.jarvis.assistant.plist").exists()
+                launch_agents = Path.home() / "Library" / "LaunchAgents"
+                return any((launch_agents / name).exists() for name in (
+                    "com.minder.assistant.plist", "com.jarvis.assistant.plist"
+                ))
             else:
-                return (Path.home() / ".config" / "autostart" / "jarvis.desktop").exists()
+                autostart = Path.home() / ".config" / "autostart"
+                return any((autostart / name).exists() for name in (
+                    "MINDER.desktop", "jarvis.desktop"
+                ))
         except Exception:
             return False
 
@@ -6569,16 +6574,18 @@ class MainWindow(QMainWindow):
             elif _OS == "Darwin":
                 plist_dir = Path.home() / "Library" / "LaunchAgents"
                 plist_dir.mkdir(parents=True, exist_ok=True)
-                plist = plist_dir / "com.jarvis.assistant.plist"
+                plist = plist_dir / "com.minder.assistant.plist"
+                legacy_plist = plist_dir / "com.jarvis.assistant.plist"
                 if currently_on:
                     plist.unlink(missing_ok=True)
+                    legacy_plist.unlink(missing_ok=True)
                 else:
                     plist.write_text(
                         '<?xml version="1.0" encoding="UTF-8"?>\n'
                         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
                         '<plist version="1.0"><dict>\n'
-                        '  <key>Label</key><string>com.jarvis.assistant</string>\n'
+                        '  <key>Label</key><string>com.minder.assistant</string>\n'
                         '  <key>ProgramArguments</key><array>\n'
                         f'    <string>{sys.executable}</string>\n'
                         f'    <string>{script}</string>\n'
@@ -6589,9 +6596,11 @@ class MainWindow(QMainWindow):
             else:
                 desk_dir = Path.home() / ".config" / "autostart"
                 desk_dir.mkdir(parents=True, exist_ok=True)
-                desk = desk_dir / "jarvis.desktop"
+                desk = desk_dir / "MINDER.desktop"
+                legacy_desk = desk_dir / "jarvis.desktop"
                 if currently_on:
                     desk.unlink(missing_ok=True)
+                    legacy_desk.unlink(missing_ok=True)
                 else:
                     desk.write_text(
                         "[Desktop Entry]\n"
@@ -6916,7 +6925,7 @@ class MainWindow(QMainWindow):
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — {APP_VERSION}")
         self._title_lbl.setText(display)
-        if display in ("MINDER", "J.A.R.V.I.S"):
+        if display == "J.A.R.V.I.S":
             self._sub_lbl.setText("Just A Rather Very Intelligent System")
         else:
             self._sub_lbl.setText("Personal AI Assistant")
