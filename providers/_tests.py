@@ -1139,7 +1139,8 @@ def test_first_run_setup_overlay():
                 CM.save_assistant_config("MINDER", "local-user")
                 fake_log = SimpleNamespace(append_log=lambda _message: None)
                 fake_window = SimpleNamespace(
-                    _overlay=None, _apply_state=lambda _state: None, _log=fake_log
+                    _overlay=None, _apply_state=lambda _state: None, _log=fake_log,
+                    _open_providers=lambda: None
                 )
                 UI.MainWindow._on_setup_done(fake_window, "", "windows")
                 saved = json.loads(CM.CONFIG_FILE.read_text(encoding="utf-8"))
