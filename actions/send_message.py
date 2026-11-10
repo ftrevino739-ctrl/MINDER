@@ -435,14 +435,14 @@ TOOL = {
     "description": (
         "Sends a text message via WhatsApp, Telegram, or another messaging "
         "platform. Write 'message_text' in the USER'S OWN LANGUAGE, exactly "
-        "what they asked to be said. "
-        "This tool answers immediately and sends in the background. On "
-        "status=started say only that you are sending it, never that it is "
-        "sent. The result follows separately: status=done means it was "
-        "confirmed delivered to the conversation, status=unverified means the "
-        "keystrokes went out and NOBODY can confirm it arrived - say exactly "
-        "that - and status=failed means it did not go. Never tell the user a "
-        "message was sent unless the result said status=done."
+        "what they asked to be said. Before sending, this tool requests human "
+        "approval on the HUD showing the exact platform, recipient and full "
+        "message. A pending confirmation is NOT a sent message; do not claim "
+        "it was sent. Only the human CONFIRM button starts the send attempt. "
+        "After approval, status=done means the platform-specific driver "
+        "verified delivery; status=unverified means the keystrokes went out "
+        "but delivery could not be verified; status=failed means it did not "
+        "go. Never claim delivery unless the result said status=done."
     ),
     "tier": "core",
     "parameters": {

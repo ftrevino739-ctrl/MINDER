@@ -96,6 +96,13 @@ class SendMessageConfirmationTests(unittest.TestCase):
         send.assert_not_called()
         self.assertEqual(captured, {})
 
+    def test_tool_description_explains_human_approval_and_delivery_states(self) -> None:
+        description = send_message_module.TOOL["description"]
+        self.assertIn("human approval on the HUD", description)
+        self.assertIn("full message", description)
+        self.assertIn("pending confirmation is NOT a sent message", description)
+        self.assertIn("verified delivery", description)
+
     def test_missing_confirmation_ui_fails_closed(self) -> None:
         with (
             patch.object(send_message_module, "_PYAUTOGUI", True),
