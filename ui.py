@@ -52,7 +52,7 @@ except Exception as _e:            # noqa: BLE001 - reported, never fatal
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
-    QGraphicsScene, QGraphicsView,
+    QGraphicsScene, QGraphicsView, QGraphicsDropShadowEffect,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar, QSlider,
 )
 
@@ -94,27 +94,50 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#00060a"
-    PANEL     = "#010d14"
-    PANEL2    = "#010f18"
-    BORDER    = "#0d3347"
-    BORDER_B  = "#1a5c7a"
-    BORDER_A  = "#0f4060"
-    PRI       = "#00d4ff"
-    PRI_DIM   = "#007a99"
-    PRI_GHO   = "#001f2e"
-    ACC       = "#ff6b00"
-    ACC2      = "#ffcc00"
-    GREEN     = "#00ff88"
-    GREEN_D   = "#00aa55"
-    RED       = "#ff3355"
-    MUTED_C   = "#ff3366"
-    TEXT      = "#8ffcff"
-    TEXT_DIM  = "#3a8a9a"
-    TEXT_MED  = "#5ab8cc"
-    WHITE     = "#d8f8ff"
-    DARK      = "#000d14"
-    BAR_BG    = "#011520"
+    BG        = "#0b111b"
+    PANEL     = "#141e2b"
+    PANEL2    = "#1b2838"
+    BORDER    = "#35465a"
+    BORDER_B  = "#657d96"
+    BORDER_A  = "#465b72"
+    PRI       = "#b7dcf5"
+    PRI_DIM   = "#789fbd"
+    PRI_GHO   = "#263d53"
+    ACC       = "#ffb07e"
+    ACC2      = "#f2d39b"
+    GREEN     = "#72d9b0"
+    GREEN_D   = "#4caa84"
+    RED       = "#ee8296"
+    MUTED_C   = "#e77b91"
+    TEXT      = "#e7eff8"
+    TEXT_DIM  = "#98aabd"
+    TEXT_MED  = "#c0ccd9"
+    WHITE     = "#f6f9fe"
+    DARK      = "#111b28"
+    BAR_BG    = "#1b2a3b"
+
+
+def _apply_glass_surface(widget: QWidget, radius: int = 18) -> None:
+    """Give a floating panel a restrained frosted-glass surface and depth.
+
+    The translucent fill lets the HUD remain subtly visible behind the panel;
+    the shadow is deliberately soft so the overlay reads as a separate layer
+    without looking like a neon frame.
+    """
+    widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    widget.setStyleSheet(f"""
+        QWidget {{
+            background: rgba(23, 32, 46, 232);
+            border: 1px solid rgba(220, 236, 252, 72);
+            border-radius: {radius}px;
+        }}
+    """)
+    shadow = QGraphicsDropShadowEffect(widget)
+    shadow.setBlurRadius(34)
+    shadow.setOffset(0, 10)
+    shadow.setColor(QColor(0, 0, 0, 145))
+    widget.setGraphicsEffect(shadow)
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -995,7 +1018,7 @@ class MetricBar(QWidget):
         p.setPen(QPen(qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(8, 5, 50, 14), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
 
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(0, 4, W - 6, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
 
@@ -1446,14 +1469,7 @@ class SetupOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            SetupOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=20)
 
         detected = {"darwin": "mac", "windows": "windows"}.get(
             _OS.lower(), "linux"
@@ -1468,7 +1484,7 @@ class SetupOverlay(QWidget):
                  align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt)
             w.setAlignment(align)
-            w.setFont(QFont("Courier New", font_size,
+            w.setFont(QFont("Segoe UI", font_size,
                             QFont.Weight.Bold if bold else QFont.Weight.Normal))
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
@@ -1486,12 +1502,12 @@ class SetupOverlay(QWidget):
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._key_input.setPlaceholderText("Only needed when you select Gemini Live")
-        self._key_input.setFont(QFont("Courier New", 10))
+        self._key_input.setFont(QFont("Segoe UI", 10))
         self._key_input.setFixedHeight(32)
         self._key_input.setStyleSheet(f"""
             QLineEdit {{
-                background: #000d12; color: {C.TEXT};
-                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                background: rgba(255, 255, 255, 13); color: {C.TEXT};
+                border: 1px solid rgba(220, 236, 252, 58); border-radius: 11px; padding: 7px 11px;
             }}
             QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
         """)
@@ -1523,7 +1539,7 @@ class SetupOverlay(QWidget):
         layout.addSpacing(12)
 
         init_btn = QPushButton("▸  INITIALISE SYSTEMS")
-        init_btn.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        init_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         init_btn.setFixedHeight(36)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         init_btn.setStyleSheet(f"""
@@ -1682,7 +1698,7 @@ class CustomizeOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             CustomizeOverlay {{
-                background: rgba(0, 6, 10, 245);
+                background: rgba(23, 32, 46, 232);
                 border: 1px solid {C.BORDER_B};
                 border-radius: 6px;
             }}
@@ -1698,8 +1714,8 @@ class CustomizeOverlay(QWidget):
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
 
-        _fs = (f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
-               f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px; }}"
+        _fs = (f"QLineEdit {{ background: rgba(255, 255, 255, 13); color: {C.TEXT}; "
+               f"border: 1px solid {C.BORDER}; border-radius: 11px; padding: 7px 11px; }}"
                f"QLineEdit:focus {{ border: 1px solid {C.PRI}; }}")
 
         lay.addWidget(_lbl("⚙  CUSTOMISE ASSISTANT", 12, True))
@@ -2293,7 +2309,7 @@ class AudioDeviceOverlay(_HudOverlay):
                 f"QSlider::sub-page:horizontal {{ background: {C.PRI_DIM}; "
                 f"border-radius: 2px; }}"
                 f"QSlider::handle:horizontal {{ background: {C.PRI}; width: 10px; "
-                f"margin: -5px 0; border-radius: 5px; }}")
+                f"margin: -5px 0; border-radius: 12px; }}")
             self._vol_lbl = QLabel(f"{int(_vol_now)}%")
             self._vol_lbl.setFont(QFont("Courier New", 8))
             self._vol_lbl.setFixedWidth(40)
@@ -2782,13 +2798,7 @@ class ProvidersOverlay(_HudOverlay):
         self._hidden: dict[str, set] = {}
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            ProvidersOverlay {{
-                background: rgba(0, 6, 10, 249);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 8px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=20)
         self.setFixedWidth(self._OW)
 
         outer = QVBoxLayout(self)
@@ -2815,14 +2825,15 @@ class ProvidersOverlay(_HudOverlay):
         cards = QHBoxLayout(); cards.setSpacing(10)
         self._card_gemini = self._mode_card(
             "☁  GEMINI LIVE",
-            "One connection carries your voice, its voice, the transcript and "
-            "the tools together. The fastest option — about half a second to "
-            "the first word.",
+            "Use Google Gemini Live for the conversation. Audio and other "
+            "enabled session data are sent to Google; a Gemini API key is "
+            "required. It is never selected as an automatic fallback.",
             "gemini")
         self._card_local = self._mode_card(
             "🖥  MY OWN SETUP",
-            "Your choice of hearing, thinking and speaking. Can run entirely on "
-            "this computer, with nothing leaving it. Slower: 1.5 to 4 seconds.",
+            "Choose hearing, thinking and speaking independently. Each service "
+            "can be local or cloud; only an all-local setup keeps processing "
+            "on this computer.",
             "pipeline")
         cards.addWidget(self._card_gemini)
         cards.addWidget(self._card_local)
@@ -3060,7 +3071,7 @@ class ProvidersOverlay(_HudOverlay):
         box.setFixedHeight(29)
         box.setStyleSheet(
             f"QComboBox {{ background: {C.DARK}; color: {C.TEXT}; "
-            f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 3px 9px; }}"
+            f"border: 1px solid {C.BORDER}; border-radius: 9px; padding: 5px 10px; }}"
             f"QComboBox:hover {{ border-color: {C.BORDER_B}; }}"
             f"QComboBox::drop-down {{ border: none; width: 18px; }}"
             f"QComboBox QAbstractItemView {{ background: {C.DARK}; color: {C.TEXT}; "
@@ -3074,7 +3085,7 @@ class ProvidersOverlay(_HudOverlay):
         w.setFixedHeight(27)
         w.setStyleSheet(
             f"QLineEdit {{ background: {C.DARK}; color: {C.TEXT}; "
-            f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 2px 9px; }}"
+            f"border: 1px solid {C.BORDER}; border-radius: 9px; padding: 5px 10px; }}"
             f"QLineEdit:focus {{ border-color: {C.PRI_DIM}; }}")
         return w
 
