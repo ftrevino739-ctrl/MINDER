@@ -35,6 +35,7 @@ import asyncio
 import json
 import sys
 import threading
+import tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -1072,6 +1073,62 @@ def test_panel_settings_survive():
             cfg_file.unlink(missing_ok=True)
 
 
+def test_first_run_setup_overlay():
+    """A pipeline install must not be held hostage by a Gemini API key."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    section("[20] First-run setup follows the selected engine")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        import ui as UI
+        from memory import config_manager as CM
+    except Exception as e:
+        check("Qt setup overlay available", False, str(e))
+        return
+
+    app = QApplication.instance() or QApplication([])
+    old_dir, old_file = CM.CONFIG_DIR, CM.CONFIG_FILE
+    with tempfile.TemporaryDirectory() as td:
+        CM.CONFIG_DIR = Path(td) / "config"
+        CM.CONFIG_FILE = CM.CONFIG_DIR / "api_keys.json"
+        try:
+            CM.save_provider_mode("pipeline")
+            pipeline_overlay = UI.SetupOverlay()
+            pipeline_results = []
+            pipeline_overlay.done.connect(
+                lambda key, os_name: pipeline_results.append((key, os_name))
+            )
+            pipeline_overlay._key_input.clear()
+            pipeline_overlay._submit()
+            check("pipeline setup accepts an empty Gemini key",
+                  pipeline_results == [("", pipeline_overlay._sel_os)],
+                  str(pipeline_results))
+            pipeline_overlay.close()
+            pipeline_overlay.deleteLater()
+
+            CM.save_provider_mode("gemini")
+            gemini_overlay = UI.SetupOverlay()
+            gemini_results = []
+            gemini_overlay.done.connect(
+                lambda key, os_name: gemini_results.append((key, os_name))
+            )
+            gemini_overlay._key_input.clear()
+            gemini_overlay._submit()
+            check("explicit Gemini setup rejects an empty key",
+                  not gemini_results, str(gemini_results))
+            key = "valid-test-gemini-key-long-enough"
+            gemini_overlay._key_input.setText(key)
+            gemini_overlay._submit()
+            check("explicit Gemini setup accepts a supplied key",
+                  gemini_results == [(key, gemini_overlay._sel_os)],
+                  str(gemini_results))
+            gemini_overlay.close()
+            gemini_overlay.deleteLater()
+            app.processEvents()
+        finally:
+            CM.CONFIG_DIR, CM.CONFIG_FILE = old_dir, old_file
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 async def main() -> int:
     print("providers self-test")
@@ -1094,6 +1151,7 @@ async def main() -> int:
     test_voice_folder_is_writable()
     test_a_chosen_voice_downloads_itself()
     test_panel_settings_survive()
+    test_first_run_setup_overlay()
 
     print(f"\n{'=' * 56}")
     print(f"{_ok} passed, {_fail} failed")
