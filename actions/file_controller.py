@@ -11,6 +11,7 @@ except ImportError:
     _SEND2TRASH = False
 
 from core.undo import push_undo
+from core import confirm as confirm_gate
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
@@ -232,18 +233,18 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
+        if target.exists():
+            return (f"'{target.name}' already exists. Nothing was changed; "
+                    f"use the write action to replace its contents.")
         target.parent.mkdir(parents=True, exist_ok=True)
-        existed = target.exists()
-        previous = None
-        if existed:
-            try:
-                previous = target.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                previous = None
-        target.write_text(content, encoding="utf-8")
-        push_undo(f"created {target.name}",
-                  _undo_write(target, previous) if existed else _undo_create(target))
+        # Exclusive creation closes the check/write race: never truncate a file
+        # that appeared after the exists() check.
+        with target.open("x", encoding="utf-8") as handle:
+            handle.write(content)
+        push_undo(f"created {target.name}", _undo_create(target))
         return f"File created: {target.name}"
+    except FileExistsError:
+        return f"'{name or path}' already exists. Nothing was changed."
     except Exception as e:
         return f"Could not create file: {e}"
 
@@ -314,6 +315,11 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         if dst.is_dir():
             dst = dst / src.name
 
+        if src.resolve() == dst.resolve():
+            return "Source and destination are the same path. Nothing was moved."
+        if dst.exists():
+            return (f"Destination already exists: {dst.name}. "
+                    f"Nothing was moved; choose a different destination.")
         dst.parent.mkdir(parents=True, exist_ok=True)
         origin = src.resolve()
         shutil.move(str(src), str(dst))
@@ -343,12 +349,29 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
         if dst.is_dir():
             dst = dst / src.name
 
+        if src.resolve() == dst.resolve():
+            return "Source and destination are the same path. Nothing was copied."
+        if dst.exists():
+            return (f"Destination already exists: {dst.name}. "
+                    f"Nothing was copied; choose a different destination.")
         dst.parent.mkdir(parents=True, exist_ok=True)
 
         if src.is_dir():
             shutil.copytree(str(src), str(dst))
         else:
-            shutil.copy2(str(src), str(dst))
+            # "xb" prevents copy2 from silently truncating a destination that
+            # appears between the exists() check and the copy.
+            try:
+                with src.open("rb") as source_handle, dst.open("xb") as target_handle:
+                    shutil.copyfileobj(source_handle, target_handle)
+                shutil.copystat(src, dst)
+            except Exception:
+                try:
+                    if dst.is_file():
+                        dst.unlink()
+                except Exception:
+                    pass
+                raise
 
         # The undo for a copy is deleting the copy — never the original.
         _copy = dst.resolve()
@@ -422,34 +445,71 @@ def write_file(path: str, name: str = "", content: str = "",
             return f"Access denied: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
 
-        # Snapshot before writing. None means "did not exist", which is a
-        # different undo (delete it) from "existed and had this in it".
+        existed = target.exists()
+        if existed and not target.is_file():
+            return f"Not a regular file: {target.name}"
+
+        # Preserve a reliable undo snapshot only for small, valid UTF-8 files.
+        # Decoding with errors='ignore' is unsafe here: it silently discards
+        # bytes and can turn an apparent undo into permanent corruption.
         previous: str | None = None
         undoable = True
-        if target.exists():
+        original_stat = None
+        if existed:
             try:
-                if target.stat().st_size > _UNDO_CONTENT_LIMIT:
-                    undoable = False       # too large to hold in memory
+                original_stat = target.stat()
+                if original_stat.st_size > _UNDO_CONTENT_LIMIT:
+                    undoable = False
                 else:
-                    previous = target.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                undoable = False           # binary, locked, unreadable
+                    previous = target.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                undoable = False
 
-        mode = "a" if append else "w"
-        with open(target, mode, encoding="utf-8") as f:
-            f.write(content)
+        def _perform_write() -> str:
+            # Recheck the target after a confirmation delay. Do not overwrite a
+            # file that changed while the user was deciding, or one that was
+            # created at this path after the original request.
+            if existed:
+                try:
+                    current_stat = target.stat()
+                except OSError:
+                    return f"'{target.name}' changed or disappeared. Nothing was written."
+                if (original_stat is None
+                        or current_stat.st_size != original_stat.st_size
+                        or current_stat.st_mtime_ns != original_stat.st_mtime_ns):
+                    return (f"'{target.name}' changed while awaiting the operation. "
+                            f"Nothing was written; review it and try again.")
+            elif target.exists():
+                return (f"A file named '{target.name}' appeared at this location. "
+                        f"Nothing was written.")
 
-        action = "Appended to" if append else "Written to"
-        if undoable:
-            push_undo(f"wrote to {target.name}", _undo_write(target, previous))
-            return f"{action}: {target.name}"
-        return (f"{action}: {target.name}. "
-                f"(Too large to keep a copy of the old contents, so this one "
-                f"cannot be undone.)")
+            mode = "a" if append else "w"
+            with target.open(mode, encoding="utf-8") as handle:
+                handle.write(content)
+
+            action = "Appended to" if append else "Written to"
+            if undoable:
+                push_undo(f"wrote to {target.name}", _undo_write(target, previous))
+                return f"{action}: {target.name}"
+            return (f"{action}: {target.name}. "
+                    f"(This file could not be snapshotted safely, so the change "
+                    f"cannot be undone.)")
+
+        if existed and not undoable:
+            reason = ("larger than the undo snapshot limit"
+                      if original_stat and original_stat.st_size > _UNDO_CONTENT_LIMIT
+                      else "not readable as UTF-8 text")
+            return confirm_gate.request(
+                key=f"file-write:{target.resolve()}",
+                title=f"Overwrite {target.name} without undo",
+                detail=(f"The existing file is {reason}. Replacing it cannot be "
+                        f"undone. No changes have been made yet."),
+                run=_perform_write,
+            )
+
+        return _perform_write()
     except Exception as e:
         return f"Could not write file: {e}"
-
-
 def find_files(name: str = "", extension: str = "",
                path: str = "home", max_results: int = 20) -> str:
     try:
