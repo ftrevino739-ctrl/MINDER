@@ -1346,6 +1346,15 @@ def test_xkiro_tts_voice_and_audio_contract():
     check("speech speed is bounded to the API's supported range",
           XKiroTTS({"api_key": "x", "speed": 99}).speed == 4.0
           and XKiroTTS({"api_key": "x", "speed": -2}).speed == 0.25)
+    cache_key = voice._cache_key("Hola, ¿cómo estás?")
+    voice._cache_put(cache_key, b"cached-pcm")
+    check("identical text uses the session cache",
+          voice._cache_get(cache_key) == b"cached-pcm")
+    check("cache keys include voice and synthesis settings",
+          voice._cache_key("Hola") != voice._cache_key("Adiós"))
+    check("cache is bounded and stores only session data",
+          voice._audio_cache_limit == 12 * 1024 * 1024
+          and not hasattr(voice, "cache_file"))
     payload = voice._payload("Hola", "wav")
     check("speech requests include the selected voice, WAV, and streamed mode",
           payload.get("input") == "Hola"
