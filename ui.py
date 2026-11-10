@@ -7225,6 +7225,18 @@ class MainWindow(QMainWindow):
         self._apply_state("LISTENING")
         self._assistant_name = _read_full_config().get("assistant_name", "MINDER") or "MINDER"
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
+        # A fresh provider-pipeline install has no LLM yet. Open its setup
+        # panel automatically so the user is not left at a listening HUD
+        # while the run loop waits for a provider that has not been chosen.
+        try:
+            from memory.config_manager import get_pipeline, get_provider_mode
+            pipe = get_pipeline()
+            needs_llm_setup = (get_provider_mode() == "pipeline" and
+                               not str(pipe.get("llm") or "").strip())
+        except Exception:
+            needs_llm_setup = True
+        if needs_llm_setup:
+            QTimer.singleShot(350, self._open_providers)
 
 
 class _RootShim:
