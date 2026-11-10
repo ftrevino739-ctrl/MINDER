@@ -9,8 +9,8 @@ MINDER is a Windows-first desktop assistant adapted from [Mark LVI by FatihMakes
 - Personal assistant for Windows first; the inherited codebase also contains macOS and Linux paths.
 - Voice input → language model → speech output, with text interaction as a fallback.
 - Desktop automation, file operations, browser control, memory, undo and confirmation features are inherited from the source and are being audited before being treated as production-ready.
-- Provider choice must be explicit. The default engine is the configurable **MY OWN SETUP** pipeline. Gemini Live is an optional mode, not an automatic fallback.
-- The interface will progressively receive a distinct MINDER visual identity with a restrained Liquid Glass-inspired treatment. Existing functionality takes priority over cosmetic rewrites.
+- Provider choice must be explicit. The default engine is the configurable **MY OWN SETUP** pipeline. Main conversation turns, coding jobs and one-shot helper requests use the selected LLM; they do not silently fall back to Gemini. Gemini Live is an optional mode.
+- The MINDER interface is being restyled with a midnight-slate palette, translucent frosted-glass setup/provider panels, soft depth, rounded controls and Segoe UI typography. This is the first visual layer, not a claim that every inherited screen is finished.
 
 ## Windows installation
 
@@ -47,13 +47,15 @@ For a Windows PC with 8 GB RAM, start with a hosted LLM rather than downloading 
 
 - A fresh configuration defaults to the provider pipeline.
 - If the pipeline has no configured LLM or its required settings are invalid, MINDER stays idle and reports that provider setup is required.
-- MINDER must not silently switch to Gemini or send microphone/screen data to Gemini because another provider failed.
+- Main conversation and one-shot helper calls in provider mode stay on the selected LLM. A failed provider does not trigger a Gemini fallback or an implicit Gemini credential read.
+- Coding jobs use the separately selected CODING provider when configured; otherwise they use the active pipeline LLM. The coding provider is called provider-only.
+- The old built-in Gemini-grounded Search tier is not available in provider mode yet; it returns no result rather than sending the request to Google. Treat web-search as a separate feature until its provider routing is completed.
 - Gemini Live is used only after the user explicitly selects that engine and configures its credentials.
 - The bundled wake-word model still recognises **“Hey Jarvis”**. Keep wake-word detection disabled until a genuine MINDER wake-word model is available.
 
 ## Tests and verification
 
-The GitHub Actions workflow currently checks Python syntax on Python 3.11, 3.12 and 3.13, and runs standard-library tests for the provider-mode configuration defaults.
+The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 109 checks with zero failures; the latest syntax matrix passed on all three Python versions.
 
 After installing the application dependencies, the provider package also has a local regression suite:
 
