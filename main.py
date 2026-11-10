@@ -2602,7 +2602,18 @@ class JarvisLive:
                 if engine_mode == "pipeline":
                     if "MINDER provider setup required" in err_str:
                         self.ui.set_state("SLEEPING")
-                        await asyncio.sleep(30)
+                        # Wait for the user to apply provider settings. The UI
+                        # signals this event, so first-run setup can recover
+                        # immediately instead of waiting through a blind retry.
+                        event = self._reconnect_event
+                        if event is None:
+                            await asyncio.sleep(30)
+                        else:
+                            try:
+                                await asyncio.wait_for(event.wait(), timeout=30)
+                            except asyncio.TimeoutError:
+                                pass
+                            event.clear()
                         continue
                     self.ui.write_log(
                         f"ERR: Provider pipeline failed ({type(e).__name__}): {e}. "
