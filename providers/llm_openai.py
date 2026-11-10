@@ -60,6 +60,7 @@ PRESETS: dict[str, str] = {
     "Together":             "https://api.together.xyz/v1",
     "Cerebras":             "https://api.cerebras.ai/v1",
     "MiniMax":              "https://api.minimax.io/v1",
+    "xKiro":                "https://api.xkiro.com/v1",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,6 +128,10 @@ CATALOG = (
      "note": "cloud · needs a key", "local": False,
      "values": {"base_url": PRESETS["MiniMax"], **_CLOUD,
                 "model": "MiniMax-M3.1-Flash"}},
+    {"id": "xkiro",      "label": "xKiro",
+     "note": "free tier · up to 500K tokens/day advertised · no card",
+     "local": False,
+     "values": {"base_url": PRESETS["xKiro"], **_CLOUD}},
     {"id": "groq",       "label": "Groq",
      "note": "cloud · very fast · usage limits and pricing vary by account tier", "local": False,
      "values": {"base_url": PRESETS["Groq"], **_CLOUD}},
@@ -503,16 +508,58 @@ class OpenAICompatLLM:
                 yield {"tool_calls": calls}
 
     # -- for the settings panel ---------------------------------------------
-    def models(self, timeout: float = 8.0) -> list[str]:
-        """What this endpoint offers, so the panel can present a list instead of
-        asking someone to type a model name exactly right."""
+    def _model_rows(self, timeout: float = 8.0) -> list[dict]:
+        """Fetch the endpoint's model records without throwing away metadata."""
         with self._httpx.Client(timeout=timeout,
                                 trust_env=self._trust_env) as cl:
             r = cl.get(f"{self.base}/models", headers=self._headers())
             r.raise_for_status()
             data = r.json()
         rows = data.get("data") if isinstance(data, dict) else data
-        return sorted({str(m.get("id")) for m in (rows or []) if m.get("id")})
+        return [row for row in (rows or [])
+                if isinstance(row, dict) and row.get("id")]
+
+    def models(self, timeout: float = 8.0) -> list[str]:
+        """What this endpoint offers, as stable model identifiers."""
+        return sorted({str(row["id"]) for row in self._model_rows(timeout)})
+
+    def model_options(self, timeout: float = 8.0) -> list[tuple[str, str]]:
+        """Return (model_id, display_label) pairs for the settings dropdown.
+
+        xKiro's public model catalogue includes models outside a user's free
+        allowance. Its access_tier field is the important distinction: a model's
+        presence in /models does not grant free access. Keep paid choices visible,
+        but label the tier before a user can select one.
+        """
+        rows = self._model_rows(timeout)
+        is_xkiro = (
+            self.base.partition("://")[2].partition("/")[0]
+            .split(":")[0].lower() == "api.xkiro.com"
+        )
+        options = []
+        for row in rows:
+            model_id = str(row["id"])
+            if is_xkiro:
+                display = str(row.get("display_name") or model_id)
+                tier = str(row.get("access_tier") or "unknown").strip().upper()
+                label_parts = [display, tier]
+                caps = row.get("capabilities") or {}
+                if isinstance(caps, dict):
+                    if caps.get("tools"):
+                        label_parts.append("TOOLS")
+                    if caps.get("vision"):
+                        label_parts.append("VISION")
+                try:
+                    context = int(row.get("context_length") or 0)
+                except (TypeError, ValueError):
+                    context = 0
+                if context > 0:
+                    label_parts.append(f"{context // 1000}K CONTEXT")
+                label = " · ".join(label_parts)
+            else:
+                label = model_id
+            options.append((model_id, label))
+        return sorted(options, key=lambda item: item[0].casefold())
 
     # A 1x1 transparent PNG — 68 bytes, the smallest thing that is a real image.
     _PIXEL = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
