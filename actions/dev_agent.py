@@ -21,14 +21,12 @@ PROJECTS_DIR        = Path.home() / "Desktop" / "MINDERProjects"
 LEGACY_PROJECTS_DIR = Path.home() / "Desktop" / "JarvisProjects"
 
 def _projects_root() -> Path:
-    """Use the MINDER folder, but keep an existing Jarvis workspace in place.
+    """Return MINDER's workspace without touching the legacy Jarvis folder.
 
-    Existing projects are user data: do not move, rename or overwrite them as
-    part of the application rebrand.
+    Existing projects are user data: never move, rename, overwrite or silently
+    reuse the legacy folder as the destination for newly generated projects.
     """
-    if PROJECTS_DIR.exists() or not LEGACY_PROJECTS_DIR.exists():
-        return PROJECTS_DIR
-    return LEGACY_PROJECTS_DIR
+    return PROJECTS_DIR
 MAX_FIX_ATTEMPTS = 5
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
 from core import gemini
@@ -501,7 +499,7 @@ def _build_project(
         if speak: speak(msg)
         return msg
 
-    proj_name    = project_name or plan.get("project_name", "jarvis_project")
+    proj_name    = project_name or plan.get("project_name", "minder_project")
     proj_name    = re.sub(r"[^\w\-]", "_", proj_name)
     project_dir  = _projects_root() / proj_name
     project_dir.mkdir(parents=True, exist_ok=True)
