@@ -12,7 +12,10 @@ PyAV is installed; otherwise the error explains the optional decoder.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import threading
+from collections import OrderedDict
 from importlib.util import find_spec
 from typing import AsyncIterator
 
@@ -49,6 +52,39 @@ class XKiroTTS:
         self.caps = dict(DEFAULT_CAPS)
         self.caps["audio_out"] = True
         self.base = API
+        # Short-lived, bounded, in-memory cache. The gateway bills by input
+        # characters, so saying the same sentence twice in one session should
+        # not submit and pay for the same synthesis twice. No text or audio is
+        # persisted to disk.
+        self._audio_cache = OrderedDict()
+        self._audio_cache_bytes = 0
+        self._audio_cache_limit = 12 * 1024 * 1024
+        self._audio_cache_lock = threading.RLock()
+
+    def _cache_key(self, text: str) -> str:
+        material = f"{self.model}\\0{self.voice_id}\\0{self.speed:.2f}\\0{text}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _cache_get(self, key: str):
+        with self._audio_cache_lock:
+            value = self._audio_cache.pop(key, None)
+            if value is not None:
+                self._audio_cache[key] = value
+            return value
+
+    def _cache_put(self, key: str, pcm: bytes) -> None:
+        if not pcm or len(pcm) > self._audio_cache_limit:
+            return
+        with self._audio_cache_lock:
+            previous = self._audio_cache.pop(key, None)
+            if previous is not None:
+                self._audio_cache_bytes -= len(previous)
+            self._audio_cache[key] = pcm
+            self._audio_cache_bytes += len(pcm)
+            while (self._audio_cache_bytes > self._audio_cache_limit
+                   or len(self._audio_cache) > 64):
+                _, removed = self._audio_cache.popitem(last=False)
+                self._audio_cache_bytes -= len(removed)
 
     def _headers(self) -> dict:
         return {
@@ -112,26 +148,30 @@ class XKiroTTS:
 
         async with httpx.AsyncClient(timeout=90.0) as client:
             for sentence in sentences:
-                fmt = "wav"
-                try:
-                    data = await self._request_audio(client, sentence, fmt)
-                except _SpeechHTTPError as exc:
-                    body = exc.body.lower()
-                    unsupported_format = (
-                        exc.status == 400
-                        and ("response_format" in body or "wav" in body or "format" in body)
-                    )
-                    if not unsupported_format:
-                        raise RuntimeError(_http_message(exc.status, exc.body)) from None
-                    fmt = "mp3"
+                cache_key = self._cache_key(sentence)
+                pcm = self._cache_get(cache_key)
+                if pcm is None:
+                    fmt = "wav"
                     try:
                         data = await self._request_audio(client, sentence, fmt)
-                    except _SpeechHTTPError as mp3_exc:
-                        raise RuntimeError(
-                            _http_message(mp3_exc.status, mp3_exc.body)
-                        ) from None
+                    except _SpeechHTTPError as exc:
+                        body = exc.body.lower()
+                        unsupported_format = (
+                            exc.status == 400
+                            and ("response_format" in body or "wav" in body or "format" in body)
+                        )
+                        if not unsupported_format:
+                            raise RuntimeError(_http_message(exc.status, exc.body)) from None
+                        fmt = "mp3"
+                        try:
+                            data = await self._request_audio(client, sentence, fmt)
+                        except _SpeechHTTPError as mp3_exc:
+                            raise RuntimeError(
+                                _http_message(mp3_exc.status, mp3_exc.body)
+                            ) from None
 
-                pcm = await self._decode(data, fmt)
+                    pcm = await self._decode(data, fmt)
+                    self._cache_put(cache_key, pcm)
                 for piece in audio.chunk(pcm):
                     yield piece
 
