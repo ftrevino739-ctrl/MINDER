@@ -47,7 +47,8 @@ Target development machine: Windows 11 with 8 GB RAM.
 - The web-search action uses DuckDuckGo in provider mode and never calls Gemini grounding unless the user explicitly selected Gemini Live.
 - CI checks Python syntax on 3.11, 3.12 and 3.13; it also runs provider-mode tests and a Qt-offscreen provider regression suite. The last fully completed provider regression run passed 115 checks with zero failures, and the syntax matrix passed on all three versions.
 - The provider regression runner emits a non-fatal warning that multimedia playback is unavailable in the headless Linux CI environment; real audio/video devices are not tested there.
-- Provider/model/voice choices are intentionally not finalized yet. The UI retrieves model lists from compatible endpoints; the remaining decision should be based on tool-calling compatibility, current limits, latency and measured quality rather than static marketing estimates.
+- xKiro is now a first-class OpenAI-compatible LLM preset (`https://api.xkiro.com/v1`). Its live catalog metadata is surfaced in the model selector as FREE, PAID or PREMIUM, with tool/vision and context hints. The provider advertises a no-card free tier and up to 500K tokens/day; this allowance is controlled by xKiro and can change. Mistral Small 4 (`mistralai/mistral-small-2603`) is a candidate to test when the live catalog marks it FREE.
+- Provider/model/voice choices are still not finalized. The UI retrieves model lists from compatible endpoints; the final stack should be chosen based on tool-calling compatibility, current limits, latency and measured quality rather than static marketing estimates.
 - The application has not yet been run or validated on the target Windows PC. Passing CI is not proof that the Windows app launches or that the user's microphone, speakers, browser and desktop actions work.
 
 ## Working rules
