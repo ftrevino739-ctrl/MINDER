@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from core import outcome
+from core import confirm, outcome
 from core.lazyimport import LazyModule, installed
 
 # Imported on first USE, not at launch — see core/lazyimport.py. PAUSE is 0.06
@@ -339,26 +339,37 @@ def send_message(
             to=receiver, platform=platform,
         )
 
+    if confirm.pending_title():
+        return outcome.ask(
+            "send_message",
+            "There is already a confirmation waiting on screen. "
+            "The user must answer it before another message can be approved.",
+            to=receiver, platform=platform,
+        )
+
     preview = message_text[:50] + ("…" if len(message_text) > 50 else "")
     print(f"[SendMessage] 📨 {platform} → {receiver}: {preview}")
     if player:
-        player.write_log(f"[msg] {platform} → {receiver}")   # the message itself IS the news
+        player.write_log(f"[msg] awaiting approval: {platform} → {receiver}")
 
-    threading.Thread(
-        target=_send_and_report,
-        args=(player, platform, receiver, message_text),
-        daemon=True, name="send-message",
-    ).start()
-
-    # Sending opens an application, searches for a person and types — several
-    # seconds during which the old code held the whole conversation still. The
-    # answer goes out now and the result follows, which is the shape
-    # whatsapp_call.py settled on for the same reason.
-    return outcome.started("send_message", platform=platform, to=receiver)
+    # A message is an external, effectively irreversible action. The model
+    # cannot approve its own tool call: the exact recipient, platform and full
+    # message are shown on the HUD, and only the human CONFIRM button invokes
+    # the sender. If the UI is unavailable, confirm.request fails closed.
+    return confirm.request(
+        key="send-message",
+        title=f"Send {platform} message to {receiver}",
+        detail=(
+            f"Platform: {platform}\n"
+            f"Recipient: {receiver}\n\n"
+            f"Exact message:\n{message_text}"
+        ),
+        run=lambda: _send_and_report(player, platform, receiver, message_text),
+    )
 
 
 def _send_and_report(player, platform: str, receiver: str,
-                     message_text: str) -> None:
+                     message_text: str) -> str:
     """Do the sending, then say what actually happened — including when it did
     not happen, and including when nobody can tell.
 
@@ -390,9 +401,11 @@ def _send_and_report(player, platform: str, receiver: str,
                          f"see the terminal")
 
     if verified:
-        # It went, and the user asked for it to go. Announcing a success they
-        # already expect is noise — the log and the panel carry the record.
-        return
+        # Delivery is verified by the platform-specific driver. The confirmation
+        # gate records approval separately; this result records actual delivery.
+        if player:
+            player.write_log(f"[msg] sent and verified: {platform} → {receiver}")
+        return result
 
     if player and hasattr(player, "request_say"):
         try:
@@ -404,6 +417,7 @@ def _send_and_report(player, platform: str, receiver: str,
             )
         except Exception:
             pass
+    return result
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
