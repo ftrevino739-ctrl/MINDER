@@ -194,19 +194,33 @@ class XKiroTTS:
             result.append((voice_id, name))
         return result
 
+    def _verify_key(self) -> dict:
+        """Validate the key through xKiro's free, non-metered usage endpoint."""
+        import httpx
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(f"{API}/usage", headers=self._headers())
+            if response.status_code >= 400:
+                raise RuntimeError(_http_message(response.status_code, response.text))
+            payload = response.json()
+        if not isinstance(payload, dict) or payload.get("object") != "usage":
+            raise RuntimeError("xKiro returned an unexpected usage response.")
+        return payload
+
     def probe(self) -> tuple[bool, str]:
         if not self.key:
-            return False, "Add your xKiro API key."
+            return False, "Add an xKiro API key or save one in the xKiro LLM provider."
         try:
             choices = self.voices()
+            usage = self._verify_key()
         except Exception as exc:
-            return False, f"Voice catalogue unavailable: {type(exc).__name__}: {str(exc)[:100]}"
+            return False, f"xKiro check failed: {type(exc).__name__}: {str(exc)[:120]}"
         selected = next((name for ident, name in choices if ident == self.voice_id), "")
         if not selected:
             return False, f"Voice {self.voice_id!r} was not found. Press LIST to choose one."
+        plan = str(usage.get("plan") or "pay-as-you-go")
         return True, (
-            f"Ready: {selected}. Speech is billed per character; "
-            "your plan's daily allowance and any wallet charges are controlled by xKiro."
+            f"Key accepted · plan: {plan} · voice: {selected}. "
+            "Speech is billed per character; your daily character allowance and any wallet charges are controlled by xKiro."
         )
 
 
