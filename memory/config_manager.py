@@ -474,6 +474,21 @@ def get_provider_mode() -> str:
         else PROVIDER_MODE_PIPELINE
 
 
+def is_initial_setup_complete() -> bool:
+    """Whether the first-run screen has enough information to proceed.
+
+    The OS choice is always required. A Gemini key is required only when
+    Gemini Live was explicitly selected; the provider pipeline must be
+    allowed to start without any Gemini credential.
+    """
+    data = load_api_keys()
+    if not str(data.get("os_system") or "").strip():
+        return False
+    if get_provider_mode() == PROVIDER_MODE_GEMINI:
+        key = str(data.get("gemini_api_key") or "").strip()
+        return len(key) > 15
+    return True
+
 def get_provider_config(provider_id: str) -> dict:
     """Stored settings for one provider — address, model, key, limits."""
     creds = get_providers().get("creds")
