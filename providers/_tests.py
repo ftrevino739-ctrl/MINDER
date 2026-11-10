@@ -1125,6 +1125,36 @@ def test_first_run_setup_overlay():
             gemini_overlay.close()
             gemini_overlay.deleteLater()
             app.processEvents()
+
+            # The first-run handler must merge OS setup into the existing file,
+            # not replace provider credentials and user preferences with two keys.
+            from types import SimpleNamespace
+            old_ui_dir, old_ui_file = UI.CONFIG_DIR, UI.API_FILE
+            try:
+                UI.CONFIG_DIR, UI.API_FILE = CM.CONFIG_DIR, CM.CONFIG_FILE
+                CM.save_provider_mode("pipeline")
+                CM.save_pipeline(stt="whisper@local", llm="openai_compat@groq", tts="system")
+                CM.save_provider_config("openai_compat@groq",
+                                        {"model": "test-model", "api_key": "test-secret"})
+                CM.save_assistant_config("MINDER", "local-user")
+                fake_log = SimpleNamespace(append_log=lambda _message: None)
+                fake_window = SimpleNamespace(
+                    _overlay=None, _apply_state=lambda _state: None, _log=fake_log
+                )
+                UI.MainWindow._on_setup_done(fake_window, "", "windows")
+                saved = json.loads(CM.CONFIG_FILE.read_text(encoding="utf-8"))
+                check("first-run preserves LLM credentials and model",
+                      saved.get("providers", {}).get("creds", {}).get(
+                          "openai_compat@groq", {}).get("api_key") == "test-secret"
+                      and saved.get("providers", {}).get("creds", {}).get(
+                          "openai_compat@groq", {}).get("model") == "test-model")
+                check("first-run preserves provider slots and user name",
+                      saved.get("providers", {}).get("pipeline", {}).get("llm") == "openai_compat@groq"
+                      and saved.get("user_name") == "local-user")
+                check("pipeline first-run does not invent a Gemini credential",
+                      "gemini_api_key" not in saved)
+            finally:
+                UI.CONFIG_DIR, UI.API_FILE = old_ui_dir, old_ui_file
         finally:
             CM.CONFIG_DIR, CM.CONFIG_FILE = old_dir, old_file
 
