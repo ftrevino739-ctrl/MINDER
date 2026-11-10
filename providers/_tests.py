@@ -1327,6 +1327,17 @@ def test_xkiro_tts_voice_and_audio_contract():
           bool(declaration) and declaration.get("kind") == "tts")
     check("xKiro TTS uses the documented speech endpoint",
           API == "https://api.xkiro.com/v1")
+    from unittest.mock import patch
+    with patch("memory.config_manager.get_provider_config",
+               return_value={"api_key": "shared-xkiro-key"}):
+        reused = XKiroTTS({})
+    check("xKiro TTS reuses the saved LLM key when its own key is blank",
+          reused.key == "shared-xkiro-key")
+    with patch("memory.config_manager.get_provider_config",
+               return_value={"api_key": "shared-xkiro-key"}):
+        separate = XKiroTTS({"api_key": "separate-tts-key"})
+    check("an explicit TTS key overrides the shared LLM key",
+          separate.key == "separate-tts-key")
     voice = XKiroTTS({"api_key": "test-key"})
     check("Mexican Female is the default xKiro voice",
           voice.voice_id == DEFAULT_VOICE == "mexican-female")
