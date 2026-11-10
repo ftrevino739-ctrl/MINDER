@@ -1210,6 +1210,24 @@ def test_pipeline_one_shot_requests_never_fall_back_to_gemini():
           result is reply and provider_call.call_args.args[0] == expected and not key_read.called)
 
 
+def test_coding_projects_use_minder_workspace():
+    """New builds must not be sent into an old Jarvis-named user folder."""
+    from unittest.mock import patch
+    from actions import dev_agent
+    section("[22] Coding workspace uses MINDERProjects")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        minder = root / "Desktop" / "MINDERProjects"
+        legacy = root / "Desktop" / "JarvisProjects"
+        legacy.mkdir(parents=True)
+        with patch.object(dev_agent, "PROJECTS_DIR", minder), \
+             patch.object(dev_agent, "LEGACY_PROJECTS_DIR", legacy):
+            selected = dev_agent._projects_root()
+        check("new coding output targets MINDERProjects",
+              selected == minder and selected != legacy, str(selected))
+        check("legacy workspace remains in place", legacy.is_dir())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 async def main() -> int:
     print("providers self-test")
@@ -1234,6 +1252,7 @@ async def main() -> int:
     test_panel_settings_survive()
     test_first_run_setup_overlay()
     test_pipeline_one_shot_requests_never_fall_back_to_gemini()
+    test_coding_projects_use_minder_workspace()
 
     print(f"\n{'=' * 56}")
     print(f"{_ok} passed, {_fail} failed")
