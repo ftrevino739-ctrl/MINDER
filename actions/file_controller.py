@@ -361,16 +361,22 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
         else:
             # "xb" prevents copy2 from silently truncating a destination that
             # appears between the exists() check and the copy.
+            destination_created = False
             try:
-                with src.open("rb") as source_handle, dst.open("xb") as target_handle:
-                    shutil.copyfileobj(source_handle, target_handle)
+                with src.open("rb") as source_handle:
+                    with dst.open("xb") as target_handle:
+                        destination_created = True
+                        shutil.copyfileobj(source_handle, target_handle)
                 shutil.copystat(src, dst)
             except Exception:
-                try:
-                    if dst.is_file():
-                        dst.unlink()
-                except Exception:
-                    pass
+                # Remove only a partial file created by this operation. If the
+                # exclusive open failed because another process won the race,
+                # that process's file must be left untouched.
+                if destination_created:
+                    try:
+                        dst.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 raise
 
         # The undo for a copy is deleting the copy — never the original.
@@ -483,9 +489,15 @@ def write_file(path: str, name: str = "", content: str = "",
                 return (f"A file named '{target.name}' appeared at this location. "
                         f"Nothing was written.")
 
-            mode = "a" if append else "w"
-            with target.open(mode, encoding="utf-8") as handle:
-                handle.write(content)
+            # Use exclusive creation for a new path. "w" could truncate a
+            # file created by another process just after the exists() check.
+            mode = ("a" if append else "w") if existed else "x"
+            try:
+                with target.open(mode, encoding="utf-8") as handle:
+                    handle.write(content)
+            except FileExistsError:
+                return (f"A file named '{target.name}' appeared at this location. "
+                        f"Nothing was written.")
 
             action = "Appended to" if append else "Written to"
             if undoable:
