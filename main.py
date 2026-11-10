@@ -438,9 +438,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "shutdown_jarvis",
         "description": (
-            "Shuts down the assistant completely. "
-            "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Jarvis. "
+            "Shuts down MINDER completely. "
+            "Call this when the user explicitly asks to end the conversation, "
+            "close the assistant, say goodbye, or stop MINDER. "
             "The user can say this in ANY language."
         ),
         "parameters": {
@@ -1440,7 +1440,7 @@ class JarvisLive:
                 #
                 # Decided HERE, not left to the model. Told plainly in the tool
                 # description, it still answered "create a quiz plugin" with
-                # mode='build' — a brand-new project in Desktop/JarvisProjects,
+                # mode='build' — a new project in Desktop/MINDERProjects,
                 # nowhere near the folder the user had just handed it. Somebody
                 # who loads a folder and asks for something means "in this
                 # folder", so every coding request goes there; clearing the
