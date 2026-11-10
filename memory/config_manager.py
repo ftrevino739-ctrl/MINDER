@@ -464,7 +464,11 @@ def get_providers() -> dict:
 
 
 def get_provider_mode() -> str:
-    """Which engine holds the conversation. Defaults to Gemini Live."""
+    """Which engine holds the conversation.
+
+    The provider pipeline is the safe default. Gemini Live is selected only
+    when the user explicitly chooses it in ENGINE & PROVIDERS.
+    """
     mode = str(get_providers().get("mode", "") or "").strip().lower()
     return mode if mode in (PROVIDER_MODE_GEMINI, PROVIDER_MODE_PIPELINE) \
         else PROVIDER_MODE_PIPELINE
