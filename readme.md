@@ -1,8 +1,6 @@
 # MINDER — Personal Desktop AI Assistant
 ### A provider-first desktop assistant for Windows, macOS and Linux
 
-> 📺 **[Watch the full setup video on YouTube](https://www.youtube.com/@FatihMakes)**
-
 MINDER is a voice-first desktop assistant built from the Mark LVI codebase. It can hear, speak, see, use tools and control supported parts of your computer. The default conversation engine is a configurable STT → LLM → TTS provider pipeline; Gemini Live is optional and is never used as a silent fallback.
 
 ---
