@@ -35,7 +35,7 @@ Do not put API keys in source files or commits. Runtime configuration is stored 
 
 ## Configure the assistant
 
-Open **ENGINE & PROVIDERS** in MINDER and choose **MY OWN SETUP**.
+On a fresh install, MINDER opens **ENGINE & PROVIDERS** automatically when no pipeline LLM is configured. Choose **MY OWN SETUP** to connect one. You can reopen this panel any time from the engine controls.
 
 1. **LLM (required):** choose a service in the OpenAI-compatible provider catalog, refresh its live model list, select a model, and save the connection. The catalog includes local endpoints such as Ollama and LM Studio and hosted endpoints such as xKiro, Groq, OpenAI, DeepSeek, Mistral, xAI and OpenRouter. xKiro's model dropdown labels each option **FREE**, **PAID** or **PREMIUM** using the provider's live `access_tier` metadata; a model appearing in its public catalog does not by itself mean your account can call it. A compatible custom endpoint can also be entered.
 2. **STT (for voice input):** choose Whisper. Its catalog includes local Whisper (requires the optional `faster-whisper` package and a model download) and hosted transcription options such as Groq Whisper and OpenAI Whisper.
@@ -61,7 +61,7 @@ A model worth checking first is **Mistral Small 4** (`mistralai/mistral-small-26
 
 ## Tests and verification
 
-The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 115 checks with zero failures; the latest syntax matrix passed on all three Python versions.
+The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 119 checks with zero failures; the latest syntax matrix passed on Python 3.11, 3.12 and 3.13. The suite also verifies that provider-pipeline one-shot requests and coding calls do not silently fall back to Gemini.
 
 After installing the application dependencies, the provider package also has a local regression suite:
 
