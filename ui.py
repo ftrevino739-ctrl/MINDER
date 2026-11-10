@@ -3017,10 +3017,11 @@ class ProvidersOverlay(_HudOverlay):
         self._model_cache[pid] = list(items)
         if self.isHidden():
             return
-        key = "voice_id" if any(v != l for v, l in items) else "model"
-        entry = self._edits.get(pid, {}).get(key)
-        if entry is None:
-            entry = self._edits.get(pid, {}).get("model")
+        fields = self._edits.get(pid, {})
+        # Model labels may intentionally differ from model ids (for example,
+        # xKiro adds FREE / PAID / PREMIUM badges). Identify the field by its
+        # semantic key, never by comparing its display label with its value.
+        entry = fields.get("model") or fields.get("voice_id") or fields.get("voice")
         if entry is None or not isinstance(entry[0], QComboBox):
             return
         box = entry[0]
