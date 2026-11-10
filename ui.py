@@ -126,8 +126,9 @@ def _apply_glass_surface(widget: QWidget, radius: int = 18) -> None:
     """
     widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    widget.setObjectName("minderGlassSurface")
     widget.setStyleSheet(f"""
-        QWidget {{
+        QWidget#minderGlassSurface {{
             background: rgba(23, 32, 46, 232);
             border: 1px solid rgba(220, 236, 252, 72);
             border-radius: {radius}px;
@@ -1528,7 +1529,7 @@ class SetupOverlay(QWidget):
         self._os_btns: dict[str, QPushButton] = {}
         for key, label in [("windows","⊞  Windows"),("mac","  macOS"),("linux","🐧  Linux")]:
             btn = QPushButton(label)
-            btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+            btn.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
             btn.setFixedHeight(32)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _, k=key: self._sel(k))
@@ -1544,11 +1545,11 @@ class SetupOverlay(QWidget):
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         init_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
+                background: rgba(183, 220, 245, 18); color: {C.PRI};
+                border: 1px solid rgba(183, 220, 245, 110); border-radius: 11px;
             }}
             QPushButton:hover {{
-                background: {C.PRI_GHO}; border: 1px solid {C.PRI};
+                background: rgba(183, 220, 245, 32); border: 1px solid {C.PRI};
             }}
         """)
         init_btn.clicked.connect(self._submit)
@@ -1563,14 +1564,14 @@ class SetupOverlay(QWidget):
                 btn.setStyleSheet(f"""
                     QPushButton {{
                         background: {fg}; color: {bg};
-                        border: none; border-radius: 3px; font-weight: bold;
+                        border: none; border-radius: 10px; font-weight: 600;
                     }}
                 """)
             else:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: #000d12; color: {C.TEXT_DIM};
-                        border: 1px solid {C.BORDER}; border-radius: 3px;
+                        background: rgba(255, 255, 255, 9); color: {C.TEXT_DIM};
+                        border: 1px solid rgba(220, 236, 252, 48); border-radius: 10px;
                     }}
                     QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
                 """)
@@ -2647,7 +2648,7 @@ class MemoryOverlay(_HudOverlay):
 
         close = QPushButton("CLOSE")
         close.setFixedHeight(30)
-        close.setFont(QFont("Courier New", 9))
+        close.setFont(QFont("Segoe UI", 9))
         close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(f"""
             QPushButton {{ background: transparent; color: {C.TEXT_MED};
@@ -2806,14 +2807,14 @@ class ProvidersOverlay(_HudOverlay):
         outer.setSpacing(10)
 
         title = QLabel("🔌  ENGINE  &  PROVIDERS")
-        title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         outer.addWidget(title)
 
         sub = QLabel("Choose the services behind MINDER. Keep them on this computer, "
                      "use cloud services, or combine both. Gemini Live is a separate, opt-in mode.")
         sub.setWordWrap(True)
-        sub.setFont(QFont("Courier New", 8))
+        sub.setFont(QFont("Segoe UI", 9))
         sub.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         outer.addWidget(sub)
 
@@ -2884,7 +2885,7 @@ class ProvidersOverlay(_HudOverlay):
         row = QHBoxLayout(); row.setSpacing(8)
         apply_btn = QPushButton("▸  SAVE  &&  APPLY")
         apply_btn.setFixedHeight(34)
-        apply_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        apply_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_btn.setStyleSheet(f"""
             QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI};
@@ -2915,7 +2916,7 @@ class ProvidersOverlay(_HudOverlay):
         b.setMinimumHeight(112)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setText(f"{title}\n\n{body}")
-        b.setFont(QFont("Courier New", 7))
+        b.setFont(QFont("Segoe UI", 8))
         b.clicked.connect(lambda _=0, v=value: self._set_mode(v))
         b.setProperty("modeValue", value)
         return b
@@ -2930,7 +2931,7 @@ class ProvidersOverlay(_HudOverlay):
                     background: {C.PRI_GHO if on else 'transparent'};
                     color: {C.TEXT if on else C.TEXT_DIM};
                     border: 1px solid {C.PRI_DIM if on else C.BORDER};
-                    border-radius: 5px;
+                    border-radius: 12px;
                 }}
                 QPushButton:hover {{ border-color: {C.BORDER_B}; }}
             """)
@@ -3046,8 +3047,8 @@ class ProvidersOverlay(_HudOverlay):
         """A bordered section. Grouping is the difference between three
         decisions and eleven controls."""
         w = QWidget()
-        w.setStyleSheet(f"background: {C.PANEL}; border: 1px solid {C.BORDER}; "
-                        f"border-radius: 5px;")
+        w.setStyleSheet(f"background: rgba(255, 255, 255, 9); "
+                        f"border: 1px solid rgba(220, 236, 252, 44); border-radius: 12px;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(12, 10, 12, 11)
         lay.setSpacing(5)
@@ -3059,7 +3060,7 @@ class ProvidersOverlay(_HudOverlay):
                bold: bool = False) -> QLabel:
         lb = QLabel(text)
         lb.setWordWrap(True)
-        lb.setFont(QFont("Courier New", size,
+        lb.setFont(QFont("Segoe UI", size,
                          QFont.Weight.Bold if bold else QFont.Weight.Normal))
         lb.setStyleSheet(f"color: {colour or C.TEXT_MED}; background: transparent; "
                          f"border: none;")
@@ -3067,7 +3068,7 @@ class ProvidersOverlay(_HudOverlay):
 
     def _combo(self) -> QComboBox:
         box = _ScrollSafeCombo()
-        box.setFont(QFont("Courier New", 8))
+        box.setFont(QFont("Segoe UI", 9))
         box.setFixedHeight(29)
         box.setStyleSheet(
             f"QComboBox {{ background: {C.DARK}; color: {C.TEXT}; "
@@ -3081,7 +3082,7 @@ class ProvidersOverlay(_HudOverlay):
 
     def _line(self, text: str = "") -> QLineEdit:
         w = QLineEdit(text)
-        w.setFont(QFont("Courier New", 8))
+        w.setFont(QFont("Segoe UI", 9))
         w.setFixedHeight(27)
         w.setStyleSheet(
             f"QLineEdit {{ background: {C.DARK}; color: {C.TEXT}; "
