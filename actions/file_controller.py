@@ -1,6 +1,8 @@
+import hashlib
 import os
 import shutil
 import platform
+import stat
 from pathlib import Path
 from datetime import datetime
 
@@ -21,22 +23,102 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 _UNDO_CONTENT_LIMIT = 1_000_000
 
 
+def _file_signature(target: Path):
+    """Identity and content fingerprint for a file MINDER may later undo."""
+    try:
+        before = target.stat()
+        if not stat.S_ISREG(before.st_mode):
+            return None
+        digest = hashlib.sha256()
+        with target.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        after = target.stat()
+        before_key = (before.st_dev, before.st_ino, before.st_size,
+                      before.st_mtime_ns, before.st_mode)
+        after_key = (after.st_dev, after.st_ino, after.st_size,
+                     after.st_mtime_ns, after.st_mode)
+        if before_key != after_key:
+            return None
+        return (*after_key, digest.hexdigest())
+    except (OSError, PermissionError):
+        return None
+
+
+def _tree_signature(target: Path):
+    """Fingerprint a copied file/tree so undo never deletes later user edits."""
+    try:
+        if target.is_file():
+            signature = _file_signature(target)
+            return ("file", signature) if signature is not None else None
+        if not target.is_dir():
+            return None
+
+        entries = []
+
+        def _describe(path: Path, relative: str):
+            info = path.lstat()
+            mode = info.st_mode
+            base = (info.st_dev, info.st_ino, info.st_size,
+                    info.st_mtime_ns, mode)
+            if stat.S_ISLNK(mode):
+                return (relative, "symlink", base, os.readlink(path))
+            if stat.S_ISDIR(mode):
+                return (relative, "directory", base)
+            if stat.S_ISREG(mode):
+                signature = _file_signature(path)
+                return (relative, "file", signature) if signature is not None else None
+            return (relative, "other", base)
+
+        root_entry = _describe(target, ".")
+        if root_entry is None:
+            return None
+        entries.append(root_entry)
+
+        for current, directories, files in os.walk(target, topdown=True, followlinks=False):
+            directories.sort()
+            files.sort()
+            current_path = Path(current)
+            # Symlinked directories are recorded but are never traversed.
+            for name in list(directories):
+                child = current_path / name
+                entry = _describe(child, child.relative_to(target).as_posix())
+                if entry is None:
+                    return None
+                entries.append(entry)
+                if child.is_symlink():
+                    directories.remove(name)
+            for name in files:
+                child = current_path / name
+                entry = _describe(child, child.relative_to(target).as_posix())
+                if entry is None:
+                    return None
+                entries.append(entry)
+
+        return ("directory", tuple(entries))
+    except OSError:
+        return None
+
+
 def _undo_move(src: Path, dst: Path):
-    """Reverse of a move: put it back where it came from."""
+    """Reverse a move without replacing something created at the old path."""
     def _fn():
         if not dst.exists():
             return f"'{dst.name}' is no longer there — nothing moved back."
+        if src.exists():
+            return (f"Cannot move '{dst.name}' back because '{src.name}' now exists "
+                    f"at the original location. Both paths were left untouched.")
         src.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(dst), str(src))
         return f"'{src.name}' is back in {src.parent.name}/."
     return _fn
 
 
-def _undo_create(target: Path):
-    """Reverse of a create: remove what we made — and only if we still made it.
+def _undo_create(target: Path, expected_signature=None):
+    """Remove a created file only while it still matches the created version.
 
-    Deliberately refuses to touch a directory that has since been filled: the
-    undo for 'create a folder' is not 'delete whatever ended up in it'."""
+    Directories are removed only while empty. Later user changes are never
+    treated as part of the assistant's original operation."""
     def _fn():
         if not target.exists():
             return f"'{target.name}' is already gone."
@@ -46,20 +128,27 @@ def _undo_create(target: Path):
                         f"leaving it alone rather than deleting your files.")
             target.rmdir()
         else:
+            current_signature = _file_signature(target)
+            if expected_signature is None or current_signature != expected_signature:
+                return (f"'{target.name}' changed after it was created. "
+                        f"Leaving it untouched.")
             target.unlink()
         return f"Removed '{target.name}'."
     return _fn
 
 
-def _undo_write(target: Path, previous: str | None):
-    """Reverse of a write: restore the old contents, or remove a file that did
-    not exist before the write created it."""
+def _undo_write(target: Path, previous: str | None, expected_signature=None):
+    """Restore prior text only if the file still matches MINDER's last write."""
     def _fn():
-        if previous is None:
-            if target.exists():
-                target.unlink()
-                return f"Removed '{target.name}' — it did not exist before."
+        if not target.exists():
             return f"'{target.name}' is already gone."
+        current_signature = _file_signature(target)
+        if expected_signature is None or current_signature != expected_signature:
+            return (f"'{target.name}' changed after MINDER wrote it. "
+                    f"Leaving the newer contents untouched.")
+        if previous is None:
+            target.unlink()
+            return f"Removed '{target.name}' — it did not exist before."
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(previous, encoding="utf-8")
         return f"Restored the previous contents of '{target.name}'."
@@ -241,7 +330,8 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         # that appeared after the exists() check.
         with target.open("x", encoding="utf-8") as handle:
             handle.write(content)
-        push_undo(f"created {target.name}", _undo_create(target))
+        push_undo(f"created {target.name}",
+                  _undo_create(target, _file_signature(target)))
         return f"File created: {target.name}"
     except FileExistsError:
         return f"'{name or path}' already exists. Nothing was changed."
@@ -379,16 +469,23 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
                         pass
                 raise
 
-        # The undo for a copy is deleting the copy — never the original.
+        # Undo may remove only the exact copy MINDER made. If the user has
+        # edited, added, replaced or removed anything inside it, keep it.
         _copy = dst.resolve()
+        expected_copy_signature = _tree_signature(_copy)
         def _undo_copy():
             if not _copy.exists():
                 return f"The copy '{_copy.name}' is already gone."
+            current_signature = _tree_signature(_copy)
+            if (expected_copy_signature is None
+                    or current_signature != expected_copy_signature):
+                return (f"The copy '{_copy.name}' changed after it was created. "
+                        f"Leaving it untouched.")
             if _copy.is_dir():
                 shutil.rmtree(_copy)
             else:
                 _copy.unlink()
-            return f"Removed the copy in {_copy.parent.name}/."
+            return f"Removed the unchanged copy in {_copy.parent.name}/."
         push_undo(f"copied {src.name} to {dst.parent.name}/", _undo_copy)
 
         return f"Copied: {src.name} → {dst.parent.name}/"
@@ -501,8 +598,16 @@ def write_file(path: str, name: str = "", content: str = "",
 
             action = "Appended to" if append else "Written to"
             if undoable:
-                push_undo(f"wrote to {target.name}", _undo_write(target, previous))
-                return f"{action}: {target.name}"
+                expected_signature = _file_signature(target)
+                if expected_signature is not None:
+                    push_undo(
+                        f"wrote to {target.name}",
+                        _undo_write(target, previous, expected_signature),
+                    )
+                    return f"{action}: {target.name}"
+                return (f"{action}: {target.name}. "
+                        f"(I could not verify a safe undo snapshot, so this change "
+                        f"cannot be undone.)")
             return (f"{action}: {target.name}. "
                     f"(This file could not be snapshotted safely, so the change "
                     f"cannot be undone.)")
@@ -662,7 +767,7 @@ def organize_desktop() -> str:
                 restored = 0
                 for origin, moved_to in entries:
                     try:
-                        if moved_to.exists():
+                        if moved_to.exists() and not origin.exists():
                             origin.parent.mkdir(parents=True, exist_ok=True)
                             shutil.move(str(moved_to), str(origin))
                             restored += 1

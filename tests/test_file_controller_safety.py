@@ -131,6 +131,71 @@ class FileControllerSafetyTests(unittest.TestCase):
         self.assertIn("changed while awaiting", result)
         self.assertEqual(target.read_text(encoding="utf-8"), "changed by the user")
 
+    def test_undo_created_file_keeps_later_user_changes(self) -> None:
+        target = self.root / "created.txt"
+        result = file_controller.create_file(str(self.root), "created.txt", "assistant")
+
+        self.assertEqual(result, "File created: created.txt")
+        target.write_text("user edit", encoding="utf-8")
+        undo_result = undo.undo_last()
+
+        self.assertIn("changed after it was created", undo_result)
+        self.assertEqual(target.read_text(encoding="utf-8"), "user edit")
+
+    def test_undo_write_keeps_later_user_changes(self) -> None:
+        target = self.root / "notes.txt"
+        target.write_text("before", encoding="utf-8")
+        file_controller.write_file(str(self.root), "notes.txt", "assistant edit")
+        target.write_text("later user edit", encoding="utf-8")
+
+        undo_result = undo.undo_last()
+
+        self.assertIn("changed after MINDER wrote it", undo_result)
+        self.assertEqual(target.read_text(encoding="utf-8"), "later user edit")
+
+    def test_undo_copy_keeps_a_copy_that_the_user_modified(self) -> None:
+        source = self.root / "source.txt"
+        destination = self.root / "destination.txt"
+        source.write_text("source", encoding="utf-8")
+        result = file_controller.copy_file(str(self.root), "source.txt", str(destination))
+
+        self.assertIn("Copied:", result)
+        destination.write_text("user version", encoding="utf-8")
+        undo_result = undo.undo_last()
+
+        self.assertIn("changed after it was created", undo_result)
+        self.assertEqual(destination.read_text(encoding="utf-8"), "user version")
+        self.assertEqual(source.read_text(encoding="utf-8"), "source")
+
+    def test_undo_move_does_not_replace_a_new_file_at_original_path(self) -> None:
+        source = self.root / "source.txt"
+        destination = self.root / "moved.txt"
+        source.write_text("original", encoding="utf-8")
+        result = file_controller.move_file(str(self.root), "source.txt", str(destination))
+
+        self.assertIn("Moved:", result)
+        source.write_text("new user file", encoding="utf-8")
+        undo_result = undo.undo_last()
+
+        self.assertIn("now exists at the original location", undo_result)
+        self.assertEqual(source.read_text(encoding="utf-8"), "new user file")
+        self.assertEqual(destination.read_text(encoding="utf-8"), "original")
+
+    def test_undo_directory_copy_keeps_new_files_added_by_user(self) -> None:
+        source = self.root / "source-folder"
+        destination = self.root / "destination-folder"
+        source.mkdir()
+        (source / "original.txt").write_text("original", encoding="utf-8")
+        result = file_controller.copy_file(str(self.root), "source-folder", str(destination))
+
+        self.assertIn("Copied:", result)
+        (destination / "user-added.txt").write_text("keep me", encoding="utf-8")
+        undo_result = undo.undo_last()
+
+        self.assertIn("changed after it was created", undo_result)
+        self.assertTrue((destination / "original.txt").exists())
+        self.assertEqual((destination / "user-added.txt").read_text(encoding="utf-8"), "keep me")
+
     def test_new_file_write_is_reversible_without_confirmation(self) -> None:
         target = self.root / "new.txt"
         result = file_controller.write_file(str(self.root), "new.txt", "hello")
