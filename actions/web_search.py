@@ -16,6 +16,14 @@ _quota_lock          = threading.Lock()
 
 
 def _gemini_available() -> bool:
+    """Gemini grounding is allowed only when the user selected Gemini mode."""
+    try:
+        from memory.config_manager import get_provider_mode
+        if get_provider_mode() != "gemini":
+            return False
+    except Exception:
+        # If the engine cannot be determined, do not send a query to Google.
+        return False
     with _quota_lock:
         return time.monotonic() >= _quota_blocked_until
 
@@ -80,7 +88,7 @@ def _get_api_key() -> str:
 
 def _gemini_search(query: str) -> str:
     if not _gemini_available():
-        raise _QuotaCooldown("Gemini grounding is in quota cooldown")
+        raise _QuotaCooldown("Gemini grounding is disabled or in quota cooldown")
 
     from core import gemini
 
@@ -201,10 +209,11 @@ def _format_news(query: str, results: list[dict]) -> str:
 
 def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
     """
-    Fetches current headlines via Gemini grounded search.
-    Optimised for speed: minimal prompt + strict token cap.
-    Returns (headline_list, raw_text_for_display).
+    Fetch headlines through Gemini grounding only when Gemini mode is selected.
+    In provider mode, return an empty result without contacting Google.
     """
+    if not _gemini_available():
+        return [], ""
     import re
     from core import gemini
 
@@ -241,7 +250,7 @@ def _gemini_headlines(n: int = 5) -> tuple[list[str], str]:
 # ── Modes ──────────────────────────────────────────────────────────────────────
 
 def _search(query: str) -> str:
-    """Default search — Gemini grounded, DDG fallback."""
+    """Search with Gemini grounding only in Gemini mode; otherwise use DDG."""
     try:
         return _gemini_search(query)
     except Exception as e:
