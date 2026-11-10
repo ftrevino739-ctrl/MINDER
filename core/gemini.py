@@ -701,8 +701,10 @@ def call(contents, tier: str = FAST, config=None,
 
         rungs = _provider_rungs(tier)
         if rungs:
-            ladder = (rungs + tuple(ladder)) if _provider_first() \\
-                else (tuple(ladder) + rungs)
+            if _provider_first():
+                ladder = rungs + tuple(ladder)
+            else:
+                ladder = tuple(ladder) + rungs
 
         if provider:
             chosen = PROVIDER_PREFIX + provider
