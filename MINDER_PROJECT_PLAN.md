@@ -29,21 +29,25 @@ Target development machine: Windows 11 with 8 GB RAM.
 
 ## Implementation phases
 
-1. **Foundation:** import and rebrand the complete source, preserve attribution, establish CI, and identify startup blockers.
-2. **Provider setup:** choose and verify the LLM, STT, and TTS providers; add a guided setup flow and connection tests.
-3. **Voice experience:** tune microphone selection, push-to-talk, interruption, latency, and the chosen voice. Keep the pretrained “Hey Jarvis” detector disabled until a genuine MINDER wake-word model exists.
-4. **Desktop actions:** audit application control, browser automation, file operations, permissions, confirmations, and undo on Windows.
-5. **Interface:** progressively replace the inherited HUD styling with the MINDER visual system, keeping functionality intact.
-6. **Reliability:** add automated tests, error recovery, logging, packaging, and a repeatable Windows installation path.
+1. **Foundation — completed:** import the source independently, preserve attribution/license, establish CI, and apply MINDER identity to core defaults and desktop integration.
+2. **Provider setup — in progress:** make the provider pipeline the default, allow first-run setup without a Gemini key, preserve existing config, test provider configuration, and connect a user-selected LLM/STT/TTS stack. Exact providers and models still need selection and measured latency checks.
+3. **Voice experience — pending:** tune microphone selection, push-to-talk, interruption, latency, and the chosen voice. Keep the pretrained “Hey Jarvis” detector disabled until a genuine MINDER wake-word model exists.
+4. **Desktop actions — pending audit:** verify application control, browser automation, file operations, permissions, confirmations, and undo on Windows.
+5. **Interface — pending:** progressively replace the inherited HUD styling with the MINDER visual system, including restrained Liquid Glass materials, while keeping functionality intact.
+6. **Reliability and release — in progress:** expand automated tests, error recovery and logging; then validate, package, and document a repeatable Windows installation path.
 
 ## Current repository state
 
-- The complete 78-file Mark LVI snapshot is imported.
-- Branding defaults are being changed to MINDER.
-- The provider pipeline is the default mode.
-- Gemini Live remains optional; the app should not silently send microphone or screen data to Gemini when a selected provider is missing or misconfigured.
+- The original 78-file Mark LVI snapshot is imported as an independent copy.
+- The default assistant identity, first-run copy, desktop shortcut names, icon output path, and new auto-start registration use MINDER. Legacy Jarvis auto-start entries are still detected so the toggle can disable an existing registration.
+- The provider pipeline is the default engine. Gemini Live is only selected explicitly.
+- First-run setup no longer blocks a pipeline install on a Gemini API key. A Gemini key is required only when Gemini Live is selected.
+- Completing first-run setup preserves existing entries in `config/api_keys.json` instead of replacing the entire file with two fields.
+- Pipeline failures are kept out of Gemini's model-quota retry and Gemini key reconfiguration logic. There is no automatic provider-to-Gemini fallback.
+- CI checks Python syntax on 3.11, 3.12 and 3.13; it also runs provider-mode tests and a Qt-offscreen provider regression suite. The last verified full run passed 102 provider checks and all three syntax/test matrix jobs.
+- The provider regression runner emits a non-fatal warning that multimedia playback is unavailable in the headless Linux CI environment; real audio/video devices are not tested there.
 - Provider/model/voice choices are intentionally not finalized yet.
-- The imported application has not yet been run or validated on the target Windows PC. A successful GitHub commit is not proof that the app launches.
+- The application has not yet been run or validated on the target Windows PC. Passing CI is not proof that the Windows app launches or that the user's microphone, speakers, browser and desktop actions work.
 
 ## Working rules
 
