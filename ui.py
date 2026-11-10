@@ -2973,7 +2973,9 @@ class ProvidersOverlay(_HudOverlay):
             items = []
             try:
                 inst = self._registry.build(pid, values)
-                if hasattr(inst, "models"):
+                if hasattr(inst, "model_options"):
+                    items = inst.model_options(timeout=6.0)
+                elif hasattr(inst, "models"):
                     items = [(m, m) for m in inst.models(timeout=6.0)]
                 elif hasattr(inst, "voices"):
                     items = list(inst.voices())
@@ -3022,7 +3024,7 @@ class ProvidersOverlay(_HudOverlay):
         if entry is None or not isinstance(entry[0], QComboBox):
             return
         box = entry[0]
-        keep = box.currentText()
+        keep = box.currentData() or box.currentText()
         box.clear()
         for value, label in items:
             box.addItem(str(label), str(value))
@@ -3601,8 +3603,7 @@ class ProvidersOverlay(_HudOverlay):
                    if not self._pipe.get(slot)]
         if "THINKING" in missing:
             self._footer.setText(
-                "⚠  ② THINKING is not set — without it the assistant falls back "
-                "to Gemini Live and says so in the log.")
+                "⚠  ② THINKING is not set — MINDER stays idle until you choose an LLM.")
         elif missing:
             words = " and ".join(f"{m.lower()}" for m in missing)
             self._footer.setText(
@@ -3698,7 +3699,9 @@ class ProvidersOverlay(_HudOverlay):
         QApplication.processEvents()
         try:
             inst = self._registry.build(pid, values)
-            if hasattr(inst, "models"):
+            if hasattr(inst, "model_options"):
+                items, key = inst.model_options(), "model"
+            elif hasattr(inst, "models"):
                 items, key = [(m, m) for m in inst.models()], "model"
             elif hasattr(inst, "voices"):
                 items, key = list(inst.voices()), "voice_id"
@@ -3716,7 +3719,7 @@ class ProvidersOverlay(_HudOverlay):
             return
         box = entry[0]
         if isinstance(box, QComboBox):
-            keep = box.currentText()
+            keep = box.currentData() or box.currentText()
             box.clear()
             for value, label in items:
                 box.addItem(str(label), str(value))
