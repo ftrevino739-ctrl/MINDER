@@ -1,9 +1,13 @@
-# Rules for coding agents working on JARVIS
+# Rules for coding agents working on MINDER
 
 The built-in coding agent (`actions/dev_agent.py`) reads this file before every
 change it makes to this project, and so should any other agent or contributor.
 Each rule below exists because breaking it produced code that looked right,
 passed a syntax check and did nothing when used.
+
+This codebase retains several inherited internal names such as `JarvisUI` and
+`shutdown_jarvis` for compatibility. Do not mass-rename those symbols as part
+of routine work. The product and all new user-facing identity must be MINDER.
 
 ## How the app runs
 
