@@ -1162,6 +1162,7 @@ def test_first_run_setup_overlay():
 
 def test_pipeline_one_shot_requests_never_fall_back_to_gemini():
     """Tool helpers must obey the same provider mode as the main voice loop."""
+    from contextlib import ExitStack
     from types import SimpleNamespace
     from unittest.mock import patch
     from core import gemini
@@ -1169,33 +1170,44 @@ def test_pipeline_one_shot_requests_never_fall_back_to_gemini():
     section("[21] One-shot calls respect the selected engine")
     expected = gemini.PROVIDER_PREFIX + "openai_compat@groq"
     reply = SimpleNamespace(text="provider reply")
-    with patch.object(CM, "get_provider_mode", return_value="pipeline"), \\
-         patch.object(CM, "get_pipeline", return_value={"llm": "openai_compat@groq"}), \\
-         patch.object(gemini, "_provider_settings", return_value=("", False)), \\
-         patch.object(gemini, "_provider_call", return_value=reply) as provider_call, \\
-         patch.object(gemini, "api_key", side_effect=AssertionError("Gemini key read in provider mode")) as key_read:
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(CM, "get_provider_mode", return_value="pipeline"))
+        stack.enter_context(patch.object(CM, "get_pipeline", return_value={"llm": "openai_compat@groq"}))
+        stack.enter_context(patch.object(gemini, "_provider_settings", return_value=("", False)))
+        provider_call = stack.enter_context(patch.object(gemini, "_provider_call", return_value=reply))
+        key_read = stack.enter_context(patch.object(
+            gemini, "api_key", side_effect=AssertionError("Gemini key read in provider mode")
+        ))
         result = gemini.call("test request")
     check("pipeline one-shot uses the configured primary LLM",
           result is reply and provider_call.call_args.args[0] == expected)
     check("pipeline one-shot never reads a Gemini API key", not key_read.called)
 
-    with patch.object(CM, "get_provider_mode", return_value="pipeline"), \\
-         patch.object(CM, "get_pipeline", return_value={}), \\
-         patch.object(gemini, "_provider_settings", return_value=("", False)), \\
-         patch.object(gemini, "_provider_call") as provider_call, \\
-         patch.object(gemini, "api_key", side_effect=AssertionError("Gemini key read in provider mode")) as key_read:
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(CM, "get_provider_mode", return_value="pipeline"))
+        stack.enter_context(patch.object(CM, "get_pipeline", return_value={}))
+        stack.enter_context(patch.object(gemini, "_provider_settings", return_value=("", False)))
+        provider_call = stack.enter_context(patch.object(gemini, "_provider_call"))
+        key_read = stack.enter_context(patch.object(
+            gemini, "api_key", side_effect=AssertionError("Gemini key read in provider mode")
+        ))
         result = gemini.call("test request")
     check("pipeline with no LLM returns no answer instead of using Gemini",
           result is None and not provider_call.called and not key_read.called)
 
-    with patch.object(CM, "get_provider_mode", return_value="gemini"), \\
-         patch.object(gemini, "_provider_settings", return_value=("", False)), \\
-         patch.object(gemini, "_provider_call", return_value=reply) as provider_call, \\
-         patch.object(gemini, "api_key", side_effect=AssertionError("explicit provider must not read Gemini key")) as key_read:
-        result = gemini.call("coding request", provider="openai_compat@groq", provider_only=True)
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(CM, "get_provider_mode", return_value="gemini"))
+        stack.enter_context(patch.object(gemini, "_provider_settings", return_value=("", False)))
+        provider_call = stack.enter_context(patch.object(gemini, "_provider_call", return_value=reply))
+        key_read = stack.enter_context(patch.object(
+            gemini, "api_key", side_effect=AssertionError("explicit provider must not read Gemini key")
+        ))
+        result = gemini.call(
+            "coding request", provider="openai_compat@groq", provider_only=True
+        )
     check("an explicitly chosen coding provider stays provider-only",
           result is reply and provider_call.call_args.args[0] == expected and not key_read.called)
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
