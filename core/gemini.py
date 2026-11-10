@@ -655,27 +655,19 @@ def _provider_call(model: str, contents, config, timeout_ms: int):
 def call(contents, tier: str = FAST, config=None,
          timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = "",
          provider: str = "", provider_only: bool = False):
-    """Run one generation, walking the ladder until one answers.
+    """Run one generation through the explicitly selected engine.
 
-    Returns the SDK's own response object, so callers that need more than the
-    text — grounding metadata, candidates, usage — still get it. Returns None
-    when every model on the ladder failed; the reason for each is printed, since
-    a silent None during a session nobody can debug is how the original problem
-    stayed hidden.
-
-    In provider-pipeline mode, every one-shot request is routed only through the
-    selected sidecar or primary pipeline LLM. Gemini is never an implicit
-    fallback. provider_only=True applies the same fail-closed rule to an
-    explicitly selected provider even when Gemini Live is the main engine.
+    Provider-pipeline mode routes every one-shot request through the chosen
+    sidecar or primary pipeline LLM. It never falls back to Gemini. The
+    provider_only flag applies the same rule to an explicitly selected
+    provider even when the main engine is Gemini Live.
     """
-    # Respect the engine chosen in the UI for all side calls, not only the
-    # microphone session. In MY OWN SETUP, tools and coding helpers must use
-    # the selected provider; falling back to the Gemini API could silently
-    # send user data to a different service.
     try:
         from memory.config_manager import get_pipeline, get_provider_mode
         pipeline_mode = get_provider_mode() == "pipeline"
     except Exception:
+        # A broken configuration must fail closed rather than leak requests to
+        # a service the user did not select.
         pipeline_mode = True
 
     if tier == SEARCH and pipeline_mode:
@@ -699,17 +691,17 @@ def call(contents, tier: str = FAST, config=None,
         chosen = PROVIDER_PREFIX + selected
         ladder = (chosen,)
         rungs = ladder
+        resolved_key = ""
     else:
-        # `tier` is normally FAST or SMART. Anything else is taken to be an explicit
-                # model name, such as the one selected for screen analysis.
+        # Gemini remains available only when the user deliberately selected
+        # Gemini mode. In that mode the established retry ladder is retained.
         ladder = _LADDERS.get(tier)
         if ladder is None:
             ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
 
-        # In explicitly selected Gemini mode, a sidecar may join the ladder.
         rungs = _provider_rungs(tier)
         if rungs:
-            ladder = (rungs + tuple(ladder)) if _provider_first() \
+            ladder = (rungs + tuple(ladder)) if _provider_first() \\
                 else (tuple(ladder) + rungs)
 
         if provider:
@@ -717,59 +709,20 @@ def call(contents, tier: str = FAST, config=None,
             rungs = (chosen,) + tuple(r for r in rungs if r != chosen)
             ladder = (chosen,) + tuple(m for m in ladder if m != chosen)
 
-    # A provider-only request must never even read a Gemini credential.
-    resolved_key = key or ("" if (pipeline_mode or provider_only) else api_key())
-    if not resolved_key and not (pipeline_mode or provider_only):
-        if not rungs:
-            print("[Gemini] no Gemini API key is configured")
-            return None
-        ladder = rungs
+        resolved_key = key or api_key()
+        if not resolved_key:
+            if not rungs:
+                print("[Gemini] no Gemini API key is configured")
+                return None
+            ladder = rungs
 
-    # Provider-pipeline mode deliberately does not turn recordings into a
-    # Gemini upload behind the users back.
+    # Recordings cannot be passed to provider LLMs here. In provider mode we
+    # must not upload them to Gemini as an invisible fallback.
     if _carries_recording(contents):
         ladder = tuple(m for m in ladder
                        if m != LIVE and not m.startswith(PROVIDER_PREFIX))
         if not ladder:
             print("[MINDER] No selected provider can read this recording.")
-            return None
-    # A configured provider joins the ladder — behind Gemini by default, in
-    # front of it when the user has asked for that. One config read; on an
-    # install with no provider this is an empty tuple and nothing changes.
-    rungs = _provider_rungs(tier)
-    if rungs:
-        ladder = (rungs + tuple(ladder)) if _provider_first() \
-            else (tuple(ladder) + rungs)
-
-    # A service the caller chose for THIS job — dev_agent's coding model — goes
-    # in front of everything, because somebody picked it on purpose. The rest
-    # of the ladder stays behind it, so a service that is down still ends in an
-    # answer rather than in nothing.
-    if provider:
-        chosen = PROVIDER_PREFIX + provider
-        rungs = (chosen,) + tuple(r for r in rungs if r != chosen)
-        ladder = (chosen,) + tuple(m for m in ladder if m != chosen)
-
-    resolved_key = key or api_key()
-    if not resolved_key:
-        # A provider does not need a Gemini key. Before this, a missing key
-        # meant every one-shot call in the app failed — which is exactly the
-        # situation somebody configuring another provider is trying to leave.
-        if not rungs:
-            print("[Gemini] no Gemini API key is configured")
-            return None
-        ladder = rungs
-
-    # A recording can only be read by the REST models. Dropping the two rungs
-    # that cannot take one is not a fallback — it is declining to make a request
-    # whose answer is already known, and it is why nothing has to be cooled down
-    # afterwards. Text and images are untouched by this: `_carries_recording`
-    # returns False for every call site that existed before it.
-    if _carries_recording(contents):
-        ladder = tuple(m for m in ladder
-                       if m != LIVE and not m.startswith(PROVIDER_PREFIX))
-        if not ladder:
-            print("[Gemini] nothing on this ladder can read a recording")
             return None
 
     cl = None
