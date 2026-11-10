@@ -128,7 +128,7 @@ CATALOG = (
      "values": {"base_url": PRESETS["MiniMax"], **_CLOUD,
                 "model": "MiniMax-M3.1-Flash"}},
     {"id": "groq",       "label": "Groq",
-     "note": "cloud · very fast · free tier", "local": False,
+     "note": "cloud · very fast · usage limits and pricing vary by account tier", "local": False,
      "values": {"base_url": PRESETS["Groq"], **_CLOUD}},
     {"id": "openai",     "label": "OpenAI",
      "note": "cloud · needs a key", "local": False,
