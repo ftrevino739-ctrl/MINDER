@@ -37,11 +37,17 @@ Do not put API keys in source files or commits. Runtime configuration is stored 
 
 Open **ENGINE & PROVIDERS** in MINDER and choose **MY OWN SETUP**.
 
-1. **LLM (required):** choose a service in the OpenAI-compatible provider catalog, press refresh to load the models offered by that endpoint, select a model, and save the connection. The catalog includes local endpoints such as Ollama and LM Studio and hosted endpoints such as Groq, OpenAI, DeepSeek, Mistral, xAI and OpenRouter. A compatible custom endpoint can also be entered.
+1. **LLM (required):** choose a service in the OpenAI-compatible provider catalog, refresh its live model list, select a model, and save the connection. The catalog includes local endpoints such as Ollama and LM Studio and hosted endpoints such as xKiro, Groq, OpenAI, DeepSeek, Mistral, xAI and OpenRouter. xKiro's model dropdown labels each option **FREE**, **PAID** or **PREMIUM** using the provider's live `access_tier` metadata; a model appearing in its public catalog does not by itself mean your account can call it. A compatible custom endpoint can also be entered.
 2. **STT (for voice input):** choose Whisper. Its catalog includes local Whisper (requires the optional `faster-whisper` package and a model download) and hosted transcription options such as Groq Whisper and OpenAI Whisper.
 3. **TTS (for spoken replies):** choose the computer's installed system voice, Piper (optional local neural voice), or another listed voice provider.
 
 For a Windows PC with 8 GB RAM, start with a hosted LLM rather than downloading a large language model locally. Local speech recognition can also use substantial memory; start with a small Whisper model if you install it.
+
+### xKiro option
+
+MINDER includes xKiro at `https://api.xkiro.com/v1`. xKiro advertises a no-card free tier with a daily token allowance (currently advertised as up to 500,000 tokens/day); this is a provider-side allowance, not a MINDER guarantee, and limits/eligibility can change. The dropdown reads the live model catalogue and marks free, paid and premium access tiers to make the distinction visible.
+
+A model worth checking first is **Mistral Small 4** (`mistralai/mistral-small-2603`) when xKiro's live catalogue marks it FREE for your account. The provider's published catalogue describes it as a 256K-context model with tool use, vision and reasoning capabilities. Always use the current tier label in MINDER rather than relying on a model name or an old list.
 
 ### Privacy and fallback behavior
 
