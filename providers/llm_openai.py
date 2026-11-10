@@ -549,12 +549,19 @@ class OpenAICompatLLM:
                         label_parts.append("TOOLS")
                     if caps.get("vision"):
                         label_parts.append("VISION")
+                    if caps.get("reasoning"):
+                        label_parts.append("REASONING")
                 try:
                     context = int(row.get("context_length") or 0)
                 except (TypeError, ValueError):
                     context = 0
-                if context > 0:
+                if context >= 1_000_000:
+                    size = f"{context / 1_000_000:.2f}".rstrip("0").rstrip(".")
+                    label_parts.append(f"{size}M CONTEXT")
+                elif context >= 1000:
                     label_parts.append(f"{context // 1000}K CONTEXT")
+                elif context > 0:
+                    label_parts.append(f"{context} CONTEXT")
                 label = " · ".join(label_parts)
             else:
                 label = model_id
