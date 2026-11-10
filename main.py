@@ -2290,13 +2290,13 @@ class JarvisLive:
             return "pipeline"
 
     def _resolve_engine_caps(self):
-        """What the chosen engine can do — or None for Gemini Live.
+        """What the explicitly chosen engine can do — or None for Gemini Live.
 
         Called BEFORE `_build_config()`, because the tool declarations depend on
         the answer. Building the providers here rather than later is deliberate:
         the registry caches them by configuration, so the objects made now are
-        the same ones the engine gets a moment later, and a misconfiguration is
-        reported while there is still a Gemini session to fall back to.
+        the same ones the engine gets a moment later. A provider setup failure
+        stops the pipeline; it must never trigger an implicit Gemini fallback.
         """
         if self._engine_mode() != "pipeline":
             return None
@@ -2608,14 +2608,6 @@ class JarvisLive:
                 print(f"[MINDER] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
-                # MINDER never silently falls back to Gemini. Until an LLM is
-                # configured in ENGINE & PROVIDERS, remain idle and keep all
-                # microphone/screen data on this machine.
-                if (self._engine_mode() == "pipeline"
-                        and "MINDER provider setup required" in err_str):
-                    self.ui.set_state("SLEEPING")
-                    await asyncio.sleep(30)
-                    continue
 
                 # Out of quota, or this model is not available to this key —
                 # step down the ladder and reconnect straight away. This is the
