@@ -1474,18 +1474,18 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("Set up MINDER for this computer.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("GEMINI LIVE API KEY · OPTIONAL", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("AIza…")
+        self._key_input.setPlaceholderText("Only needed when you select Gemini Live")
         self._key_input.setFont(QFont("Courier New", 10))
         self._key_input.setFixedHeight(32)
         self._key_input.setStyleSheet(f"""
@@ -1561,11 +1561,17 @@ class SetupOverlay(QWidget):
 
     def _submit(self):
         key = self._key_input.text().strip()
-        if not key:
+        try:
+            from memory.config_manager import get_provider_mode
+            needs_gemini_key = get_provider_mode() == "gemini"
+        except Exception:
+            needs_gemini_key = False
+        if needs_gemini_key and len(key) <= 15:
             self._key_input.setStyleSheet(
                 self._key_input.styleSheet() +
                 f" QLineEdit {{ border: 1px solid {C.RED}; }}"
             )
+            self._key_input.setPlaceholderText("A Gemini Live key is required for the selected engine")
             return
         self.done.emit(key, self._sel_os)
 
@@ -7159,12 +7165,8 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
-        try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
-        except Exception:
-            return False
+        from memory.config_manager import is_initial_setup_complete
+        return is_initial_setup_complete()
 
     def _show_setup(self):
         ov = SetupOverlay(self.centralWidget())
@@ -7181,8 +7183,18 @@ class MainWindow(QMainWindow):
 
     def _on_setup_done(self, key: str, os_name: str):
         os.makedirs(CONFIG_DIR, exist_ok=True)
+        data = {}
+        if API_FILE.exists():
+            try:
+                loaded = json.loads(API_FILE.read_text(encoding="utf-8"))
+                data = loaded if isinstance(loaded, dict) else {}
+            except Exception:
+                data = {}
+        if key.strip():
+            data["gemini_api_key"] = key.strip()
+        data["os_system"] = os_name
         API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
+            json.dumps(data, indent=4),
             encoding="utf-8",
         )
         self._ready = True
