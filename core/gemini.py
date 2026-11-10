@@ -654,7 +654,7 @@ def _provider_call(model: str, contents, config, timeout_ms: int):
 
 def call(contents, tier: str = FAST, config=None,
          timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = "",
-         provider: str = ""):
+         provider: str = "", provider_only: bool = False):
     """Run one generation, walking the ladder until one answers.
 
     Returns the SDK's own response object, so callers that need more than the
@@ -662,16 +662,77 @@ def call(contents, tier: str = FAST, config=None,
     when every model on the ladder failed; the reason for each is printed, since
     a silent None during a session nobody can debug is how the original problem
     stayed hidden.
-    """
-    # `tier` is normally FAST or SMART. Anything else is taken to be an explicit
-    # model name — screen_agent lets the user pick one in its settings — and it
-    # is tried first, with the reasoning ladder behind it. So a user's choice is
-    # honoured, and a user's choice that is having an outage still degrades to
-    # something that answers instead of to nothing.
-    ladder = _LADDERS.get(tier)
-    if ladder is None:
-        ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
 
+    In provider-pipeline mode, every one-shot request is routed only through the
+    selected sidecar or primary pipeline LLM. Gemini is never an implicit
+    fallback. provider_only=True applies the same fail-closed rule to an
+    explicitly selected provider even when Gemini Live is the main engine.
+    """
+    # Respect the engine chosen in the UI for all side calls, not only the
+    # microphone session. In MY OWN SETUP, tools and coding helpers must use
+    # the selected provider; falling back to the Gemini API could silently
+    # send user data to a different service.
+    try:
+        from memory.config_manager import get_pipeline, get_provider_mode
+        pipeline_mode = get_provider_mode() == "pipeline"
+    except Exception:
+        pipeline_mode = True
+
+    if tier == SEARCH and pipeline_mode:
+        print("[MINDER] Grounded Gemini Search is unavailable in provider mode; use the web-search action.")
+        return None
+
+    if provider_only and not provider:
+        raise ValueError("provider_only requires an explicitly selected provider id")
+
+    if pipeline_mode or provider_only:
+        selected = (provider or "").strip()
+        if not selected and pipeline_mode:
+            sidecar, _sidecar_first = _provider_settings()
+            if sidecar:
+                selected = sidecar
+            else:
+                selected = str(get_pipeline().get("llm") or "").strip()
+        if not selected:
+            print("[MINDER] No LLM provider is configured; Gemini fallback is disabled.")
+            return None
+        chosen = PROVIDER_PREFIX + selected
+        ladder = (chosen,)
+        rungs = ladder
+    else:
+        # `tier` is normally FAST or SMART. Anything else is taken to be an explicit
+                # model name, such as the one selected for screen analysis.
+        ladder = _LADDERS.get(tier)
+        if ladder is None:
+            ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
+
+        # In explicitly selected Gemini mode, a sidecar may join the ladder.
+        rungs = _provider_rungs(tier)
+        if rungs:
+            ladder = (rungs + tuple(ladder)) if _provider_first() \
+                else (tuple(ladder) + rungs)
+
+        if provider:
+            chosen = PROVIDER_PREFIX + provider
+            rungs = (chosen,) + tuple(r for r in rungs if r != chosen)
+            ladder = (chosen,) + tuple(m for m in ladder if m != chosen)
+
+    # A provider-only request must never even read a Gemini credential.
+    resolved_key = key or ("" if (pipeline_mode or provider_only) else api_key())
+    if not resolved_key and not (pipeline_mode or provider_only):
+        if not rungs:
+            print("[Gemini] no Gemini API key is configured")
+            return None
+        ladder = rungs
+
+    # Provider-pipeline mode deliberately does not turn recordings into a
+    # Gemini upload behind the users back.
+    if _carries_recording(contents):
+        ladder = tuple(m for m in ladder
+                       if m != LIVE and not m.startswith(PROVIDER_PREFIX))
+        if not ladder:
+            print("[MINDER] No selected provider can read this recording.")
+            return None
     # A configured provider joins the ladder — behind Gemini by default, in
     # front of it when the user has asked for that. One config read; on an
     # install with no provider this is an empty tuple and nothing changes.
