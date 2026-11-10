@@ -1034,7 +1034,7 @@ class LogWidget(QTextEdit):
         # without bound — keeps memory flat and every insert cheap. Oldest
         # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Segoe UI", 9))
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C.PANEL};
@@ -1327,11 +1327,11 @@ class _DropCanvas(QWidget):
         p.drawLine(QPointF(cx - 8, cy - 6), QPointF(cx, cy - 14))
         p.drawLine(QPointF(cx + 8, cy - 6), QPointF(cx, cy - 14))
         p.drawLine(QPointF(cx - 14, cy + 4), QPointF(cx + 14, cy + 4))
-        p.setFont(QFont("Courier New", 8))
+        p.setFont(QFont("Segoe UI", 8))
         p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
         p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
                    "Drop a file or folder  or  Click to Browse")
-        p.setFont(QFont("Courier New", 7))
+        p.setFont(QFont("Segoe UI", 8))
         p.setPen(QPen(qcol("#1a4a5a"), 1))
         p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
                    "Images · Video · Audio · PDF · Docs · Code · Project folders")
@@ -1385,7 +1385,7 @@ class _DropCanvas(QWidget):
         p.drawText(QRectF(tx, H * 0.18 + 34, tw, 12),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, par)
 
-        p.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         p.setPen(QPen(qcol(C.RED, 180), 1))
         p.drawText(QRectF(W - 34, 0, 28, H), Qt.AlignmentFlag.AlignCenter, "✕")
 
@@ -1489,8 +1489,8 @@ class SetupOverlay(QWidget):
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
 
-        layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Set up MINDER for this computer.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("MINDER  ·  WELCOME", 13, True))
+        layout.addWidget(_lbl("Choose the computer MINDER will run on. Providers come next.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -1538,7 +1538,7 @@ class SetupOverlay(QWidget):
         self._sel(detected)
         layout.addSpacing(12)
 
-        init_btn = QPushButton("▸  INITIALISE SYSTEMS")
+        init_btn = QPushButton("Continue to MINDER")
         init_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         init_btn.setFixedHeight(36)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1556,7 +1556,7 @@ class SetupOverlay(QWidget):
 
     def _sel(self, key: str):
         self._sel_os = key
-        pal = {"windows":(C.PRI,"#001a22"),"mac":(C.ACC2,"#1a1400"),"linux":(C.GREEN,"#001a0d")}
+        pal = {"windows":(C.PRI, C.DARK),"mac":(C.PRI, C.DARK),"linux":(C.PRI, C.DARK)}
         for k, btn in self._os_btns.items():
             if k == key:
                 fg, bg = pal[k]
@@ -1726,7 +1726,7 @@ class CustomizeOverlay(QWidget):
         lay.addWidget(_lbl("ASSISTANT NAME", 8, color=C.TEXT_DIM,
                             align=Qt.AlignmentFlag.AlignLeft))
         self._name_input = QLineEdit(assistant_name)
-        self._name_input.setFont(QFont("Courier New", 10))
+        self._name_input.setFont(QFont("Segoe UI", 10))
         self._name_input.setFixedHeight(32)
         self._name_input.setStyleSheet(_fs)
         lay.addWidget(self._name_input)
@@ -1926,7 +1926,7 @@ class PluginManagerOverlay(QWidget):
         lay.setSpacing(6)
 
         hdr = QLabel("🧩  PLUGIN MANAGER")
-        hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         lay.addWidget(hdr)
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -2073,7 +2073,7 @@ class ConfirmBanner(_HudOverlay):
 
         ttl = QLabel(title)
         ttl.setWordWrap(True)
-        ttl.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        ttl.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
         ttl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
         lay.addWidget(ttl)
 
@@ -2806,12 +2806,12 @@ class ProvidersOverlay(_HudOverlay):
         outer.setSpacing(10)
 
         title = QLabel("🔌  ENGINE  &  PROVIDERS")
-        title.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         outer.addWidget(title)
 
-        sub = QLabel("Choose what powers the conversation. "
-                     "Configure your preferred LLM and speech providers here. Gemini Live is optional.")
+        sub = QLabel("Choose the services behind MINDER. Keep them on this computer, "
+                     "use cloud services, or combine both. Gemini Live is a separate, opt-in mode.")
         sub.setWordWrap(True)
         sub.setFont(QFont("Courier New", 8))
         sub.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
@@ -2912,7 +2912,7 @@ class ProvidersOverlay(_HudOverlay):
     def _mode_card(self, title: str, body: str, value: str) -> QPushButton:
         b = QPushButton()
         b.setCheckable(True)
-        b.setMinimumHeight(84)
+        b.setMinimumHeight(112)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setText(f"{title}\n\n{body}")
         b.setFont(QFont("Courier New", 7))
