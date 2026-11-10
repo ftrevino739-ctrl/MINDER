@@ -98,6 +98,7 @@ a small built-in fallback — instead of crashing.
 
 - Never send a child process's output to `DEVNULL` without logging it, and
   never report success without checking that the thing actually happened.
+- External communication (messages, emails, posts and calls) must use `core.confirm.request` so a human approves the exact recipient, platform and content on the HUD. Never treat a model-supplied `confirmed` value or tool call as human approval; if the confirmation UI is unavailable, fail closed.
 - Settings and keys live in `config/api_keys.json` through
   `memory/config_manager.py`; never write that file directly.
 - Keep to the libraries already in `requirements.txt`.
