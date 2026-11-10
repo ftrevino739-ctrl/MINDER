@@ -37,6 +37,28 @@ class ProviderModeDefaultsTests(unittest.TestCase):
         config_manager.save_provider_mode("gemini")
         self.assertEqual(config_manager.get_provider_mode(), "gemini")
 
+    def test_first_run_pipeline_does_not_require_gemini_key(self) -> None:
+        config_manager.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        config_manager.CONFIG_FILE.write_text(
+            json.dumps({"os_system": "windows"}), encoding="utf-8"
+        )
+        self.assertTrue(config_manager.is_initial_setup_complete())
+
+    def test_first_run_still_requires_an_os_selection(self) -> None:
+        self.assertFalse(config_manager.is_initial_setup_complete())
+
+    def test_explicit_gemini_mode_requires_a_gemini_key(self) -> None:
+        config_manager.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        config_manager.CONFIG_FILE.write_text(
+            json.dumps({"os_system": "windows", "providers": {"mode": "gemini"}}),
+            encoding="utf-8",
+        )
+        self.assertFalse(config_manager.is_initial_setup_complete())
+        data = json.loads(config_manager.CONFIG_FILE.read_text(encoding="utf-8"))
+        data["gemini_api_key"] = "valid-test-key-longer-than-fifteen"
+        config_manager.CONFIG_FILE.write_text(json.dumps(data), encoding="utf-8")
+        self.assertTrue(config_manager.is_initial_setup_complete())
+
     def test_invalid_saved_mode_fails_closed_to_pipeline(self) -> None:
         config_manager.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         config_manager.CONFIG_FILE.write_text(
