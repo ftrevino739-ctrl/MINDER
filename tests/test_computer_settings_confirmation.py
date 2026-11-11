@@ -70,7 +70,7 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
             result = settings.computer_settings({"action": "restart"})
 
         self.assertIn("cannot confirm", result.lower())
-        self.assertIn("nothing was done", result.lower())
+        self.assertIn("have not done it", result.lower())
         operation.assert_not_called()
 
     def test_model_supplied_confirmed_flag_cannot_bypass_human_gate(self) -> None:
