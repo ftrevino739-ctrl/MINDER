@@ -509,13 +509,16 @@ def _process_data(path: Path, file_type: str, action: str,
         try:
             if fmt == "csv":
                 out = _output_path(path, "converted", ".csv")
-                df.to_csv(out, index=False, encoding="utf-8")
+                with out.open("x", encoding="utf-8", newline="") as handle:
+                    df.to_csv(handle, index=False)
             elif fmt == "xlsx":
                 out = _output_path(path, "converted", ".xlsx")
-                df.to_excel(out, index=False)
+                with out.open("xb") as handle:
+                    df.to_excel(handle, index=False)
             elif fmt == "json":
                 out = _output_path(path, "converted", ".json")
-                df.to_json(out, orient="records", force_ascii=False, indent=2)
+                with out.open("x", encoding="utf-8", newline="") as handle:
+                    df.to_json(handle, orient="records", force_ascii=False, indent=2)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             return f"Convert failed: {e}"
@@ -533,7 +536,8 @@ def _process_data(path: Path, file_type: str, action: str,
             elif condition == "lt":       filtered = df[df[col] < float(value)]
             else:                         filtered = df[df[col] == value]
             out = _output_path(path, "filtered", ".csv")
-            filtered.to_csv(out, index=False)
+            with out.open("x", encoding="utf-8", newline="") as handle:
+                filtered.to_csv(handle, index=False)
             return f"Filtered: {len(filtered)} rows match. Saved: {out.name}"
         except Exception as e:
             return f"Filter failed: {e}"
@@ -544,7 +548,8 @@ def _process_data(path: Path, file_type: str, action: str,
         try:
             sorted_df = df.sort_values(col, ascending=asc)
             out = _output_path(path, "sorted", path.suffix)
-            sorted_df.to_csv(out, index=False)
+            with out.open("x", encoding="utf-8", newline="") as handle:
+                sorted_df.to_csv(handle, index=False)
             return f"Sorted by '{col}'. Saved: {out.name}"
         except Exception as e:
             return f"Sort failed: {e}"
@@ -890,8 +895,8 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             cmd = ["ffmpeg", "-i", str(path), "-ss", str(start)]
             if end:
                 cmd += ["-to", str(end)]
-            cmd += ["-c", "copy", str(out), "-y"]
-            _run_ffmpeg(cmd[:-1] if cmd and cmd[-1] == "-y" else cmd, 600)
+            cmd += ["-c", "copy", str(out)]
+            _run_ffmpeg(cmd, 600)
             return f"Trimmed video saved: {out.name}"
         except Exception as e:
             return f"Trim failed: {e}"
