@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import importlib.util
 import unittest
 from unittest.mock import AsyncMock, patch
 
-_real_find_spec = __import__("importlib").util.find_spec
+_real_find_spec = importlib.util.find_spec
 
 
 def _find_spec(name, *args, **kwargs):
@@ -15,7 +17,7 @@ def _find_spec(name, *args, **kwargs):
 
 
 with patch("importlib.util.find_spec", side_effect=_find_spec):
-    browser_module = __import__("importlib").import_module("actions.browser_control")
+    browser_module = importlib.import_module("actions.browser_control")
 
 
 class FakeNavigationPage:
@@ -126,6 +128,30 @@ class BrowserUnsavedNavigationTests(unittest.TestCase):
         self.assertIn("status=done", result)
         page.goto.assert_awaited_once()
         request.assert_not_called()
+
+    def test_selected_upload_file_is_treated_as_unsaved_form_data(self):
+        dirty = [{
+            "label": "Attachment",
+            "type": "file",
+            "password": False,
+            "length": 1,
+            "value": "Selected files: contract.pdf",
+            "id": "attachment",
+            "name": "attachment",
+        }]
+        page = FakeNavigationPage([dirty, dirty])
+        session = make_session(page)
+        captured = {}
+
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session.go_to("https://example.com"))
+
+        self.assertEqual(result, "PENDING")
+        self.assertIn("contract.pdf", captured["detail"])
+        page.goto.assert_not_awaited()
 
     def test_password_values_are_redacted_from_navigation_approval(self):
         dirty = [{

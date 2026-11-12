@@ -750,7 +750,28 @@ class _BrowserSession:
             const dirty = [];
             for (const el of nodes) {
                 const type = (el.getAttribute('type') || '').toLowerCase();
-                if (['hidden', 'file', 'button', 'submit', 'reset'].includes(type)) continue;
+                if (['hidden', 'button', 'submit', 'reset'].includes(type)) continue;
+                const label = el.getAttribute('aria-label')
+                    || el.getAttribute('placeholder')
+                    || el.labels?.[0]?.innerText
+                    || el.getAttribute('name')
+                    || el.id
+                    || el.tagName.toLowerCase();
+                if (type === 'file') {
+                    const names = [...(el.files || [])].map(file => file.name);
+                    if (names.length) {
+                        dirty.push({
+                            label: String(label).trim(),
+                            type: 'file',
+                            password: false,
+                            length: names.length,
+                            value: 'Selected files: ' + names.join(', '),
+                            id: el.id || '',
+                            name: el.getAttribute('name') || ''
+                        });
+                    }
+                    continue;
+                }
                 const password = type === 'password';
                 const tag = el.tagName.toLowerCase();
                 const value = el.isContentEditable
@@ -769,14 +790,9 @@ class _BrowserSession:
                     changed = value !== String(el.defaultValue || '');
                 }
                 if (!changed) continue;
-                const label = el.getAttribute('aria-label')
-                    || el.getAttribute('placeholder')
-                    || el.labels?.[0]?.innerText
-                    || el.getAttribute('name')
-                    || el.id
-                    || tag;
+                const fieldLabel = label || tag;
                 dirty.push({
-                    label: String(label).trim(),
+                    label: String(fieldLabel).trim(),
                     type: type || tag,
                     password,
                     length: value.length,
@@ -1895,8 +1911,8 @@ TOOL = {
         "Controls the web browser: open an address, search, click, type, "
         "scroll, read the page, manage tabs, go back and forward. "
         "High-impact submit/send/publish/purchase/delete controls, unknown action "
-        "buttons, form submissions by Enter, and closing/reloading tabs or browser "
-        "sessions require human approval on the HUD. "
+        "buttons, form submissions by Enter, replacing existing browser field data, "
+        "and leaving pages with unsaved forms/files require human approval on the HUD. "
         "THIS TOOL OPENS THE BROWSER ITSELF. Never call open_app for the "
         "browser first - doing both launches it twice, the second copy on a "
         "different profile with none of the user's sign-ins. 'Open Chrome and "
