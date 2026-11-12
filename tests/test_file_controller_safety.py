@@ -83,6 +83,17 @@ class FileControllerSafetyTests(unittest.TestCase):
         gate.assert_not_called()
         self.assertEqual(source.read_text(encoding="utf-8"), "keep")
 
+    def test_file_controller_organize_uses_approved_desktop_flow(self) -> None:
+        from actions import desktop as desktop_module
+
+        with patch.object(
+            desktop_module, "organize_desktop", return_value="[CONFIRMATION_PENDING]"
+        ) as approved:
+            result = file_controller.file_controller({"action": "organize_desktop"})
+
+        self.assertEqual(result, "[CONFIRMATION_PENDING]")
+        approved.assert_called_once_with()
+
     def test_create_file_never_overwrites_an_existing_file(self) -> None:
         target = self.root / "notes.txt"
         target.write_text("keep this", encoding="utf-8")

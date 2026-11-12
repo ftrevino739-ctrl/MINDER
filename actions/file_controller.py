@@ -772,86 +772,9 @@ def get_disk_usage(path: str = "home") -> str:
 
 
 def organize_desktop() -> str:
-    type_map = {
-        "Images":    {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico", ".heic"},
-        "Documents": {".pdf", ".doc", ".docx", ".txt", ".xls", ".xlsx",
-                      ".ppt", ".pptx", ".csv", ".odt", ".ods", ".odp"},
-        "Videos":    {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm", ".m4v"},
-        "Music":     {".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a"},
-        "Archives":  {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"},
-        "Code":      {".py", ".js", ".ts", ".html", ".css", ".json", ".xml",
-                      ".cpp", ".java", ".cs", ".go", ".rs", ".sh"},
-    }
-
-    desktop = _get_desktop()
-    moved, skipped = [], []
-    journal: list[tuple[Path, Path]] = []   # (where it was, where it went)
-
-    try:
-        for item in desktop.iterdir():
-            # Leave folders, hidden files and organize-folders untouched
-            if item.is_dir() or item.name.startswith("."):
-                continue
-            if item.name in {k for k in type_map}:
-                continue
-
-            ext        = item.suffix.lower()
-            target_dir = desktop / "Others"
-            for folder, exts in type_map.items():
-                if ext in exts:
-                    target_dir = desktop / folder
-                    break
-
-            target_dir.mkdir(exist_ok=True)
-            new_path = target_dir / item.name
-
-            if new_path.exists():
-                skipped.append(item.name)
-                continue
-
-            origin = item.resolve()
-            shutil.move(str(item), str(new_path))
-            journal.append((origin, new_path.resolve()))
-            moved.append(f"{item.name} → {target_dir.name}/")
-
-        # One command, dozens of moves — so one undo that reverses all of them.
-        # Without this, "organize my desktop" is the single least reversible
-        # thing the assistant can do to a person's files, and it was completely
-        # ungated.
-        if journal:
-            def _undo_organize(entries=tuple(journal)):
-                restored = 0
-                for origin, moved_to in entries:
-                    try:
-                        if moved_to.exists() and not origin.exists():
-                            origin.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.move(str(moved_to), str(origin))
-                            restored += 1
-                    except Exception as e:
-                        print(f"[file] undo organize: {moved_to.name}: {e}")
-                # Clear away the folders we created, but only while they are
-                # empty — anything the user put in since stays.
-                for folder in {m.parent for _o, m in entries}:
-                    try:
-                        if folder.exists() and folder.is_dir() and not any(folder.iterdir()):
-                            folder.rmdir()
-                    except Exception:
-                        pass
-                return f"{restored} file(s) put back on the desktop."
-            push_undo(f"organized the desktop ({len(journal)} files)", _undo_organize)
-
-        result = f"Desktop organized: {len(moved)} files moved."
-        if moved:
-            preview = moved[:8]
-            result += "\n" + "\n".join(preview)
-            if len(moved) > 8:
-                result += f"\n... and {len(moved) - 8} more."
-        if skipped:
-            result += f"\n{len(skipped)} file(s) skipped (name conflict)."
-        return result
-
-    except Exception as e:
-        return f"Could not organize desktop: {e}"
+    """Use the preview-and-approval desktop organizer instead of moving files directly."""
+    from actions.desktop import organize_desktop as approved_organize_desktop
+    return approved_organize_desktop()
 
 
 def get_file_info(path: str, name: str = "") -> str:
