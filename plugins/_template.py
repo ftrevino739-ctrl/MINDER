@@ -1,8 +1,8 @@
 """
-Drop-in JARVIS plugin template.
+Drop-in MINDER plugin template.
 
 Copy this file, rename it (no leading underscore), fill in PLUGIN and run().
-No other file needs to change — JARVIS discovers this automatically at startup.
+No other file needs to change — MINDER discovers the metadata at startup without importing this module. Plugins are OFF by default. Enable a plugin in Plugin Manager only after reviewing its source; the exact source hash is pinned at activation. Changing the file later requires a fresh review and activation.
 
 ONE RULE IF YOUR PLUGIN NEEDS TO ASK A MODEL SOMETHING
     Go through `core.gemini`. Never build your own `genai.Client`.
@@ -18,7 +18,7 @@ ONE RULE IF YOUR PLUGIN NEEDS TO ASK A MODEL SOMETHING
     every call, a ladder that steps to another model when one is out of quota or
     not answering, and — since Mark LVI — whatever provider the user configured
     in ⚙ → ENGINE & PROVIDERS, so your plugin keeps working on Ollama or another
-    API when Gemini's text quota is gone.
+    API when the selected provider's text quota is gone.
 
     A hardcoded client gets none of that and hangs forever when its one model is
     unwell, which is the exact fault the ladder was built to end.
@@ -27,7 +27,7 @@ ONE RULE IF YOUR PLUGIN NEEDS TO ASK A MODEL SOMETHING
 PLUGIN = {
     "name": "my_plugin",                     # snake_case, unique, ^[a-zA-Z_][a-zA-Z0-9_]{0,63}$
     "description": (
-        "One or two sentences Gemini uses to decide when to call this tool. "
+        "One or two sentences the selected LLM uses to decide when to call this tool. "
         "Be explicit about trigger phrases and, if it could be confused with "
         "another tool, say which tool NOT to use instead (see game_updater's "
         "description in main.py for the pattern)."
@@ -44,7 +44,7 @@ PLUGIN = {
 def run(parameters: dict, player=None, session_memory=None) -> str:
     """
     parameters: dict of the args Gemini extracted, matching PLUGIN['parameters'].
-    player: the JarvisUI instance — use player.write_log(f"JARVIS: ...") to log,
+    player: the JarvisUI instance — use player.write_log(f"MINDER: ...") to log,
             same as actions/*.py. May be None.
     session_memory: reserved, usually None today (core tools mostly pass None too).
     Return a short natural-language string — this is spoken back to the user.
@@ -58,7 +58,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         return f"Sir, my_plugin failed: {e}"
     if player:
         try:
-            player.write_log(f"JARVIS: {result_text}")
+            player.write_log(f"MINDER: {result_text}")
         except Exception:
             pass
     return result_text
