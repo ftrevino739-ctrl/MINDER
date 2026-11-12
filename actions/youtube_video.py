@@ -194,20 +194,30 @@ def _summarize_with_gemini(transcript: str, video_url: str) -> str:
 
 
 def _save_summary(content: str, video_url: str) -> str:
-    ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"youtube_summary_{ts}.txt"
-    desktop  = Path.home() / "Desktop"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    desktop = Path.home() / "Desktop"
     desktop.mkdir(parents=True, exist_ok=True)
-    filepath = desktop / filename
 
     header = (
-        f"JARVIS — YouTube Summary\n"
-        f"{'─' * 50}\n"
-        f"URL    : {video_url}\n"
-        f"Date   : {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"{'─' * 50}\n\n"
+        f"MINDER — YouTube Summary\\n"
+        f"{'─' * 50}\\n"
+        f"URL    : {video_url}\\n"
+        f"Date   : {datetime.now().strftime('%Y-%m-%d %H:%M')}\\n"
+        f"{'─' * 50}\\n\\n"
     )
-    filepath.write_text(header + content, encoding="utf-8")
+    filepath = None
+    for counter in range(1000):
+        suffix = "" if counter == 0 else f"_{counter}"
+        candidate = desktop / f"youtube_summary_{ts}{suffix}.txt"
+        try:
+            with candidate.open("x", encoding="utf-8") as handle:
+                handle.write(header + content)
+            filepath = candidate
+            break
+        except FileExistsError:
+            continue
+    if filepath is None:
+        return "Could not save the YouTube summary: too many files already use this timestamp."
 
     try:
         if is_windows():

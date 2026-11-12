@@ -271,13 +271,25 @@ def _format_text_report(
     return "\n".join(lines)
 
 def _save_to_desktop(content: str, origin: str, destination: str) -> str:
-    ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"flights_{origin}_{destination}_{ts}.txt".replace(" ", "_")
-    desktop  = Path.home() / "Desktop"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_origin = re.sub(r"[^A-Za-z0-9._-]+", "_", origin).strip("._-")[:40] or "origin"
+    safe_destination = re.sub(r"[^A-Za-z0-9._-]+", "_", destination).strip("._-")[:40] or "destination"
+    desktop = Path.home() / "Desktop"
     desktop.mkdir(parents=True, exist_ok=True)
-    filepath = desktop / filename
+    filepath = None
+    for counter in range(1000):
+        suffix = "" if counter == 0 else f"_{counter}"
+        candidate = desktop / f"flights_{safe_origin}_{safe_destination}_{ts}{suffix}.txt"
+        try:
+            with candidate.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+            filepath = candidate
+            break
+        except FileExistsError:
+            continue
+    if filepath is None:
+        return "Could not save the flight report: too many files already use this timestamp."
 
-    filepath.write_text(content, encoding="utf-8")
     print(f"[FlightFinder] 💾 Saved: {filepath}")
 
     try:
