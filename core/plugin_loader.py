@@ -143,7 +143,14 @@ class PluginRegistry:
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
                 try:
-                    spec.loader.exec_module(module)
+                    # Compile the exact bytes whose hash was approved. Using the
+                    # loader's exec_module() would re-read the path and leave a
+                    # time-of-check/time-of-use window for a swapped file.
+                    approved_source = source.decode("utf-8")
+                    code = compile(
+                        approved_source, str(path), "exec", dont_inherit=True,
+                    )
+                    exec(code, module.__dict__)
                 except Exception:
                     sys.modules.pop(module_name, None)
                     raise

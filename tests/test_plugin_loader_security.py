@@ -129,6 +129,44 @@ class PluginLoaderSecurityTests(unittest.TestCase):
         self.assertIn("disabled", result.lower())
         self.assertFalse(self.marker.exists())
 
+    def test_import_executes_only_the_exact_hashed_bytes(self):
+        import hashlib
+        path = self._write_plugin()
+        approved_bytes = path.read_bytes()
+        approved_hash = hashlib.sha256(approved_bytes).hexdigest()
+        swapped = {"done": False}
+        original_read_bytes = Path.read_bytes
+
+        def swap_after_read(target):
+            if target == path and not swapped["done"]:
+                swapped["done"] = True
+                tampered = path.read_text(encoding="utf-8").replace(
+                    'write_text("executed"', 'write_text("tampered"',
+                )
+                path.write_text(tampered, encoding="utf-8")
+                return approved_bytes
+            return original_read_bytes(target)
+
+        with (
+            patch.object(plugin_loader, "get_plugin_enabled",
+                         side_effect=lambda _name, digest: digest == approved_hash),
+            patch.object(Path, "read_bytes", new=swap_after_read),
+        ):
+            registry = plugin_loader.discover_plugins(
+                self.plugins_dir, set(), logger=lambda _message: None,
+            )
+            # Discovery reads the current file and pins that source; the next call
+            # simulates a concurrent swap between approval hashing and execution.
+            path.write_bytes(approved_bytes)
+            registry = plugin_loader.discover_plugins(
+                self.plugins_dir, set(), logger=lambda _message: None,
+            )
+            result = registry.run("sample_plugin", {})
+
+        self.assertEqual(result, "plugin ran")
+        self.assertTrue(swapped["done"])
+        self.assertEqual(self.marker.read_text(encoding="utf-8"), "executed")
+
     def test_plugin_enablement_persists_the_approved_source_hash(self):
         import json
         from memory import config_manager
