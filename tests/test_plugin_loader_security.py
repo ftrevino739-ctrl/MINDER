@@ -129,6 +129,19 @@ class PluginLoaderSecurityTests(unittest.TestCase):
         self.assertIn("disabled", result.lower())
         self.assertFalse(self.marker.exists())
 
+    def test_plugin_enablement_does_not_overwrite_corrupt_config(self):
+        from memory import config_manager
+        config_path = self.plugins_dir.parent / "api_keys.json"
+        original = b"{ this is not valid json"
+        config_path.write_bytes(original)
+        with (
+            patch.object(config_manager, "CONFIG_FILE", config_path),
+            patch.object(config_manager, "CONFIG_DIR", self.plugins_dir.parent),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "left untouched"):
+                config_manager.save_plugin_enabled("sample_plugin", True, "a" * 64)
+        self.assertEqual(config_path.read_bytes(), original)
+
     def test_import_executes_only_the_exact_hashed_bytes(self):
         import hashlib
         path = self._write_plugin()

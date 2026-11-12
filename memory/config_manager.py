@@ -1,5 +1,7 @@
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 def get_base_dir() -> Path:
@@ -399,12 +401,21 @@ def save_plugin_enabled(
 ) -> None:
     """Persist explicit opt-in and the exact source revision approved by the user."""
     ensure_config_dir()
-    data: dict = {}
+    original_bytes = None
     if CONFIG_FILE.exists():
         try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+            original_bytes = CONFIG_FILE.read_bytes()
+            data = json.loads(original_bytes.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("configuration root must be an object")
+        except Exception as exc:
+            raise RuntimeError(
+                "Plugin permission was not changed because api_keys.json "
+                "could not be read safely; the original file was left untouched."
+            ) from exc
+    else:
+        data = {}
+
     plugins_cfg = data.get("plugins_enabled")
     if not isinstance(plugins_cfg, dict):
         plugins_cfg = {}
@@ -420,7 +431,45 @@ def save_plugin_enabled(
             raise ValueError("Enabling a plugin requires its inspected SHA-256 source hash.")
         hashes[plugin_name] = digest
     data["plugin_source_hashes"] = hashes
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=CONFIG_DIR,
+            prefix=f".{CONFIG_FILE.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            json.dump(data, handle, indent=4)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        # Refuse to replace a configuration file that changed while this
+        # permission update was being prepared.
+        if original_bytes is None:
+            if CONFIG_FILE.exists():
+                raise RuntimeError(
+                    "Plugin permission was not saved because a new configuration "
+                    "file appeared during the update. Retry after reviewing it."
+                )
+        elif not CONFIG_FILE.exists() or CONFIG_FILE.read_bytes() != original_bytes:
+            raise RuntimeError(
+                "Plugin permission was not saved because api_keys.json changed "
+                "during the update. Retry after reviewing the latest settings."
+            )
+
+        os.replace(temp_path, CONFIG_FILE)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 # ── Providers: local STT/LLM/TTS and non-Gemini APIs ─────────────────────────
