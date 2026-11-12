@@ -357,16 +357,39 @@ def create_folder(path: str, name: str = "") -> str:
         return f"Could not create folder: {e}"
 
 
+def _delete_approved_target(target: Path, original: Path, expected_signature) -> str:
+    """Move the reviewed target to Trash only if it is still the same file/tree."""
+    try:
+        if target.is_symlink() or not _is_safe_path(target):
+            return "Delete refused: the target became a symbolic link or left the safe home folder."
+        if not target.exists() or target.resolve() != original:
+            return "Delete refused: the target changed or disappeared while approval was pending."
+        if _tree_signature(target) != expected_signature:
+            return "Delete refused: the file or folder changed while approval was pending."
+        result = _safe_trash(target)
+        if result.startswith("Moved to Trash"):
+            push_undo(
+                f"deleted {original.name}",
+                lambda p=original: _restore_from_trash(p),
+            )
+        return result
+    except Exception as exc:
+        return f"Could not move to Trash: {exc}"
+
+
 def delete_file(path: str, name: str = "") -> str:
     try:
-        base   = _resolve_path(path)
+        base = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
+        if target.is_symlink():
+            return f"Access denied: symbolic links cannot be deleted by MINDER: {target}"
         if not target.exists():
             return f"Not found: {target.name}"
 
-        # Safe-directory check — protect critical user folders
+        # Protect the user's well-known home folders even if their contents
+        # are empty. A delete request must name an item inside them instead.
         protected = {
             _get_desktop(), _get_downloads(), _get_documents(),
             _get_pictures(), _get_music(), _get_videos(), Path.home()
@@ -375,11 +398,44 @@ def delete_file(path: str, name: str = "") -> str:
             return f"Protected directory, cannot delete: {target.name}"
 
         original = target.resolve()
-        result   = _safe_trash(target)
-        if result.startswith("Moved to Trash"):
-            push_undo(f"deleted {original.name}",
-                      lambda p=original: _restore_from_trash(p))
-        return result
+        expected_signature = _tree_signature(target)
+        if expected_signature is None:
+            return f"Delete refused: could not safely fingerprint {target.name}."
+
+        if target.is_dir():
+            entry_count = max(0, len(expected_signature[1]) - 1)
+            byte_count = sum(
+                entry[2][2]
+                for entry in expected_signature[1]
+                if len(entry) > 2 and entry[1] == "file" and entry[2] is not None
+            )
+            target_kind = f"folder containing {entry_count} item(s)"
+        else:
+            byte_count = target.stat().st_size
+            target_kind = "file"
+
+        detail = (
+            f"Exact path: {original}\n"
+            f"Target type: {target_kind}\n"
+            f"Approximate data size: {byte_count:,} bytes\n\n"
+            "MINDER will move this exact target to the operating system's Trash / "
+            "Recycle Bin, not permanently erase it. The target will be fingerprinted "
+            "again after approval; if it changed, the operation will be refused."
+        )
+        if len(detail) > confirm_gate.MAX_DETAIL_CHARS:
+            return (
+                "Delete refused: the complete target details could not be displayed "
+                "for approval."
+            )
+
+        return confirm_gate.request(
+            key=f"file-delete:{original}",
+            title=f"Approve moving to Trash: {original.name}",
+            detail=detail,
+            run=lambda: _delete_approved_target(
+                target, original, expected_signature,
+            ),
+        )
 
     except PermissionError:
         return f"Permission denied: {path}"

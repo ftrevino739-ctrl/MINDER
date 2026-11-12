@@ -25,6 +25,64 @@ class FileControllerSafetyTests(unittest.TestCase):
         file_controller._UNDO_CONTENT_LIMIT = self._old_limit
         self._temporary.cleanup()
 
+    def test_delete_requires_approval_before_moving_target_to_trash(self) -> None:
+        target = self.root / "important.txt"
+        target.write_text("keep me", encoding="utf-8")
+        captured = {}
+
+        with (
+            patch.object(
+                file_controller.confirm_gate, "request",
+                side_effect=lambda **kwargs: captured.update(kwargs) or "[CONFIRMATION_PENDING]",
+            ) as gate,
+            patch.object(file_controller, "_safe_trash", return_value="Moved to Trash: important.txt") as trash,
+        ):
+            result = file_controller.delete_file(str(self.root), "important.txt")
+
+        self.assertEqual(result, "[CONFIRMATION_PENDING]")
+        gate.assert_called_once()
+        trash.assert_not_called()
+        self.assertTrue(target.exists())
+        self.assertIn(str(target), captured["detail"])
+        self.assertIn("not permanently erase", captured["detail"])
+        moved = captured["run"]()
+        self.assertIn("Moved to Trash", moved)
+        trash.assert_called_once_with(target)
+
+    def test_delete_refuses_if_file_changes_while_approval_is_pending(self) -> None:
+        target = self.root / "important.txt"
+        target.write_text("original", encoding="utf-8")
+        captured = {}
+
+        with (
+            patch.object(
+                file_controller.confirm_gate, "request",
+                side_effect=lambda **kwargs: captured.update(kwargs) or "[CONFIRMATION_PENDING]",
+            ),
+            patch.object(file_controller, "_safe_trash") as trash,
+        ):
+            file_controller.delete_file(str(self.root), "important.txt")
+
+        target.write_text("user changed this", encoding="utf-8")
+        result = captured["run"]()
+        self.assertIn("changed while approval was pending", result)
+        trash.assert_not_called()
+        self.assertEqual(target.read_text(encoding="utf-8"), "user changed this")
+
+    def test_delete_rejects_symbolic_links(self) -> None:
+        target = self.root / "link.txt"
+        source = self.root / "source.txt"
+        source.write_text("keep", encoding="utf-8")
+        try:
+            target.symlink_to(source)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are not available in this environment")
+        with patch.object(file_controller.confirm_gate, "request") as gate:
+            result = file_controller.delete_file(str(self.root), "link.txt")
+        self.assertIn("symbolic links", result)
+        gate.assert_not_called()
+        self.assertEqual(source.read_text(encoding="utf-8"), "keep")
+
     def test_create_file_never_overwrites_an_existing_file(self) -> None:
         target = self.root / "notes.txt"
         target.write_text("keep this", encoding="utf-8")
