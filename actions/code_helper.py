@@ -110,6 +110,13 @@ def _save_file(path: Path, content: str) -> str:
         if path.exists():
             if not path.is_file():
                 return outcome.failed("code_helper", "the target is not a regular file", path=str(path))
+            if path.stat().st_size > confirm.MAX_DETAIL_CHARS // 2:
+                return outcome.failed(
+                    "code_helper",
+                    "the existing file is too large to display completely for safe review; "
+                    "nothing was overwritten",
+                    path=str(path),
+                )
             previous = path.read_text(encoding="utf-8")
             if previous == content:
                 return f"Saved to: {path} (unchanged)"
@@ -255,7 +262,7 @@ def _detect_intent(description: str, file_path: str, code: str) -> str:
         return "explain"
     return "write"
 
-def _write(description: str, language: str, output_path: str, player=None) -> tuple[str, Path]:
+def _write(description: str, language: str, output_path: str, player=None) -> tuple[str, Path, str]:
     lang  = language or "python"
     model = _get_gemini()
 
@@ -449,7 +456,14 @@ def _build(description, language, output_path, args, timeout, speak=None, player
 
         try:
             code = _fix_code(code, last_output, description)
-            _save_file(path, code)
+            save_status = _save_file(path, code)
+            if save_status.startswith("[CONFIRMATION_PENDING]"):
+                return (
+                    f"A fix was generated for {path}, but replacing the existing file "
+                    f"requires approval. {save_status}"
+                )
+            if not save_status.startswith("Saved to:"):
+                return f"The fix was generated but not saved: {save_status}"
         except Exception as e:
             msg = f"Could not fix code on attempt {attempt}: {e}"
             if speak: speak(msg)

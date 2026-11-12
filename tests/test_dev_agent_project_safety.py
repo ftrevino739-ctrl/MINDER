@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -66,7 +67,12 @@ class DevAgentProjectSafetyTests(unittest.TestCase):
                     "request",
                     side_effect=lambda **kwargs: captured.update(kwargs) or "[CONFIRMATION_PENDING]",
                 ),
-                patch.object(dev_agent.subprocess, "run") as run,
+                patch.object(
+                    dev_agent.subprocess, "run",
+                    return_value=subprocess.CompletedProcess(
+                        args=["python"], returncode=0, stdout="hello", stderr="",
+                    ),
+                ) as run,
             ):
                 result = dev_agent._run_project("python main.py --name 'my app'", project, 60)
 
