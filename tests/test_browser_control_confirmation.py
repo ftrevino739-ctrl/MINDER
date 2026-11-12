@@ -129,6 +129,7 @@ class BrowserConfirmationTests(unittest.TestCase):
 
     def test_enter_submission_also_requires_approval(self):
         context = {
+            "hasForm": True,
             "formLabel": "Message composer",
             "submitters": ["Send"],
             "fields": ["Recipient: Alex", "Message: Hello there"],
@@ -151,6 +152,34 @@ class BrowserConfirmationTests(unittest.TestCase):
         page.keyboard.press.assert_not_awaited()
         self.assertIn("Hello there", captured["detail"])
         self.assertIn("Approve browser submission: Send", captured["title"])
+
+
+    def test_unlabelled_submit_control_still_requires_approval(self):
+        locator = FakeLocator({
+            "label": "",
+            "formLabel": "",
+            "isSubmitControl": True,
+            "fields": ["Query: private text"],
+        })
+        page = FakePage()
+        captured = {}
+        session = make_session()
+
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session._click_locator(page, locator, "button[type=submit]"))
+
+        self.assertEqual(result, "PENDING")
+        locator.click.assert_not_awaited()
+        self.assertIn("private text", captured["detail"])
+
+    def test_unknown_form_submission_requires_approval_but_plain_search_does_not(self):
+        self.assertTrue(requires_form_submission_approval("", ["Continue"]))
+        self.assertTrue(requires_form_submission_approval("", []))
+        self.assertFalse(requires_form_submission_approval("search-form", ["Search"]))
+        self.assertFalse(requires_form_submission_approval("", ["Buscar"]))
 
     def test_ordinary_navigation_click_does_not_prompt(self):
         locator = FakeLocator({"label": "Home", "formLabel": "", "fields": []})

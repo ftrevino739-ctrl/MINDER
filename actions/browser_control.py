@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote_plus
 
-from actions._browser_safety import normalize_browser_url, requires_human_approval
+from actions._browser_safety import (
+    normalize_browser_url,
+    requires_form_submission_approval,
+    requires_human_approval,
+)
 from core import appidentity, confirm, outcome
 
 # Importing playwright cost 198 ms at every launch, paid by action discovery
@@ -818,6 +822,10 @@ class _BrowserSession:
                     || el.value || el.getAttribute('title') || '').trim(),
                 formLabel: form ? (form.getAttribute('aria-label')
                     || form.getAttribute('name') || '') : '',
+                isSubmitControl: Boolean(form && el.matches(
+                    'button:not([type]), button[type="submit"], '
+                    + 'input[type="submit"], input[type="image"]'
+                )),
                 fields
             };
         }""")
@@ -879,7 +887,7 @@ class _BrowserSession:
         details = await self._control_details(locator)
         label = (details.get("label") or "").strip()
         form_label = (details.get("formLabel") or "").strip()
-        if not requires_human_approval(label, form_label, description):
+        if not details.get("isSubmitControl") and not requires_human_approval(label, form_label, description):
             await locator.click(timeout=8_000)
             return f"Clicked: {label or description or 'element'}"
 
@@ -949,7 +957,7 @@ class _BrowserSession:
         return await page.evaluate("""() => {
             const active = document.activeElement;
             const form = active && (active.form || active.closest('form'));
-            if (!form) return {formLabel: '', submitters: [], fields: []};
+            if (!form) return {hasForm: false, formLabel: '', submitters: [], fields: []};
             const submitters = [...form.querySelectorAll(
                 'button, input[type="submit"], input[type="image"], [role="button"]'
             )].map(el => (el.getAttribute('aria-label') || el.innerText
@@ -969,6 +977,7 @@ class _BrowserSession:
                 return value ? label + ': ' + String(value).slice(0, 2000) : null;
             }).filter(Boolean);
             return {
+                hasForm: true,
                 formLabel: form.getAttribute('aria-label')
                     || form.getAttribute('name') || '',
                 submitters,
@@ -1006,10 +1015,9 @@ class _BrowserSession:
         try:
             if key.strip().lower() in {"enter", "numpadenter"}:
                 context = await self._form_submission_context(page)
-                submitter_text = " ".join(
-                    [context.get("formLabel", "")] + context.get("submitters", [])
-                )
-                if requires_human_approval(submitter_text):
+                if context.get("hasForm") and requires_form_submission_approval(
+                    context.get("formLabel", ""), context.get("submitters", [])
+                ):
                     page_url = page.url
                     page_title = await page.title()
                     action_label = next(

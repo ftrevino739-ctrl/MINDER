@@ -59,6 +59,22 @@ def normalize_browser_url(value: str) -> str:
     return raw
 
 
+
+
+_SAFE_SEARCH_SUBMITTER = re.compile(
+    r"^(?:search|search now|find|find now|go|buscar|buscar ahora)$",
+    re.IGNORECASE,
+)
+
+
+def requires_form_submission_approval(form_label: str, submitters: list[str]) -> bool:
+    """Require approval for form submissions unless every submitter is a plain search."""
+    labels = [label.strip() for label in (submitters or []) if label.strip()]
+    if not labels:
+        return True
+    return not all(_SAFE_SEARCH_SUBMITTER.fullmatch(label) for label in labels)
+
+
 def requires_human_approval(*descriptions: str) -> bool:
     """Identify browser controls that may submit external or destructive actions."""
     return any(
