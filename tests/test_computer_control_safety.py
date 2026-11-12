@@ -25,11 +25,11 @@ class ComputerControlSafetyTests(unittest.TestCase):
         captured = self._capture_confirmation()
         with patch.object(computer, "_click") as click:
             result = computer.computer_control({"action": "click", "x": 100, "y": 200})
-        self.assertEqual(result, "PENDING")
-        click.assert_not_called()
-        self.assertIn("(100, 200)", captured["detail"])
-        captured["run"]()
-        click.assert_called_once_with(100, 200, "left", 1)
+            self.assertEqual(result, "PENDING")
+            click.assert_not_called()
+            self.assertIn("(100, 200)", captured["detail"])
+            captured["run"]()
+            click.assert_called_once_with(100, 200, "left", 1)
 
     def test_drag_waits_for_human_approval(self):
         captured = self._capture_confirmation()
@@ -37,11 +37,11 @@ class ComputerControlSafetyTests(unittest.TestCase):
             result = computer.computer_control({
                 "action": "drag", "x1": 1, "y1": 2, "x2": 30, "y2": 40,
             })
-        self.assertEqual(result, "PENDING")
-        drag.assert_not_called()
-        self.assertIn("(1, 2)", captured["detail"])
-        captured["run"]()
-        drag.assert_called_once_with(1, 2, 30, 40)
+            self.assertEqual(result, "PENDING")
+            drag.assert_not_called()
+            self.assertIn("(1, 2)", captured["detail"])
+            captured["run"]()
+            drag.assert_called_once_with(1, 2, 30, 40)
 
     def test_enter_and_delete_keys_wait_for_approval(self):
         for key in ("enter", "delete"):
@@ -49,10 +49,10 @@ class ComputerControlSafetyTests(unittest.TestCase):
                 captured = self._capture_confirmation()
                 with patch.object(computer, "_press") as press:
                     result = computer.computer_control({"action": "press", "key": key})
-                self.assertEqual(result, "PENDING")
-                press.assert_not_called()
-                captured["run"]()
-                press.assert_called_once_with(key)
+                    self.assertEqual(result, "PENDING")
+                    press.assert_not_called()
+                    captured["run"]()
+                    press.assert_called_once_with(key)
 
     def test_risky_shortcut_waits_for_approval(self):
         captured = self._capture_confirmation()
@@ -60,11 +60,11 @@ class ComputerControlSafetyTests(unittest.TestCase):
             result = computer.computer_control({
                 "action": "hotkey", "keys": "ctrl+shift+delete",
             })
-        self.assertEqual(result, "PENDING")
-        hotkey.assert_not_called()
-        self.assertIn("ctrl + shift + delete", captured["detail"])
-        captured["run"]()
-        hotkey.assert_called_once_with("ctrl", "shift", "delete")
+            self.assertEqual(result, "PENDING")
+            hotkey.assert_not_called()
+            self.assertIn("ctrl + shift + delete", captured["detail"])
+            captured["run"]()
+            hotkey.assert_called_once_with("ctrl", "shift", "delete")
 
     def test_smart_type_clear_first_waits_for_approval(self):
         captured = self._capture_confirmation()
@@ -72,11 +72,11 @@ class ComputerControlSafetyTests(unittest.TestCase):
             result = computer.computer_control({
                 "action": "smart_type", "text": "replacement", "clear_first": True,
             })
-        self.assertEqual(result, "PENDING")
-        smart_type.assert_not_called()
-        self.assertIn("replacement", captured["detail"])
-        captured["run"]()
-        smart_type.assert_called_once_with("replacement", clear_first=True)
+            self.assertEqual(result, "PENDING")
+            smart_type.assert_not_called()
+            self.assertIn("replacement", captured["detail"])
+            captured["run"]()
+            smart_type.assert_called_once_with("replacement", clear_first=True)
 
     def test_ordinary_scroll_stays_immediate(self):
         with patch.object(computer, "_scroll", return_value="scrolled") as scroll:
@@ -90,9 +90,9 @@ class ComputerControlSafetyTests(unittest.TestCase):
             result = computer.computer_control({
                 "action": "screen_click", "description": "Continue to checkout",
             })
-        self.assertEqual(result, "PENDING")
-        click.assert_not_called()
-        self.assertIn("Continue to checkout", captured["detail"])
+            self.assertEqual(result, "PENDING")
+            click.assert_not_called()
+            self.assertIn("Continue to checkout", captured["detail"])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Human-confirmation regression tests for irreversible computer settings."""
+"""Human-confirmation regression tests for irreversible and risky computer actions."""
 from __future__ import annotations
 
 import unittest
@@ -35,14 +35,13 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
                     patch.object(settings.confirm, "request", side_effect=request) as gate,
                 ):
                     result = settings.computer_settings({"action": action})
-
-                self.assertEqual(result, "[CONFIRMATION_PENDING]")
-                self.assertEqual(captured["title"], expected_title)
-                self.assertTrue(captured["detail"])
-                operation.assert_not_called()
-                gate.assert_called_once()
-                captured["run"]()
-                operation.assert_called_once_with()
+                    self.assertEqual(result, "[CONFIRMATION_PENDING]")
+                    self.assertEqual(captured["title"], expected_title)
+                    self.assertTrue(captured["detail"])
+                    operation.assert_not_called()
+                    gate.assert_called_once()
+                    captured["run"]()
+                    operation.assert_called_once_with()
 
     def test_existing_confirmation_blocks_a_second_irreversible_action(self) -> None:
         operation = unittest.mock.Mock()
@@ -54,7 +53,6 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
             patch.object(settings.confirm, "request") as gate,
         ):
             result = settings.computer_settings({"action": "shutdown"})
-
         self.assertIn("already a confirmation waiting", result)
         gate.assert_not_called()
         operation.assert_not_called()
@@ -68,7 +66,6 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
             patch.object(settings.confirm, "_show_cb", None),
         ):
             result = settings.computer_settings({"action": "restart"})
-
         self.assertIn("cannot confirm", result.lower())
         self.assertIn("have not done it", result.lower())
         operation.assert_not_called()
@@ -88,13 +85,22 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
             patch.object(settings.confirm, "request", side_effect=request),
         ):
             result = settings.computer_settings({
-                "action": "shutdown",
-                "confirmed": True,
+                "action": "shutdown", "confirmed": True,
             })
+            self.assertEqual(result, "[CONFIRMATION_PENDING]")
+            operation.assert_not_called()
+            self.assertIn("Anything unsaved will be lost", captured["detail"])
 
-        self.assertEqual(result, "[CONFIRMATION_PENDING]")
-        operation.assert_not_called()
-        self.assertIn("Anything unsaved will be lost", captured["detail"])
+    def test_wifi_confirmation_explains_connection_risk(self) -> None:
+        captured = {}
+        with (
+            patch.object(settings.confirm, "pending_title", return_value=""),
+            patch.object(settings.confirm, "request",
+                         side_effect=lambda **kwargs:
+                         captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
+        ):
+            settings.computer_settings({"action": "toggle_wifi"})
+        self.assertIn("MINDER loses its connection", captured["detail"])
 
     def test_enter_and_window_close_shortcuts_require_approval(self):
         cases = (
@@ -114,11 +120,11 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
                                  captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
                 ):
                     result = settings.computer_settings({"action": action})
-                self.assertEqual(result, "[CONFIRMATION_PENDING]")
-                self.assertEqual(captured["title"], title)
-                operation.assert_not_called()
-                captured["run"]()
-                operation.assert_called_once_with()
+                    self.assertEqual(result, "[CONFIRMATION_PENDING]")
+                    self.assertEqual(captured["title"], title)
+                    operation.assert_not_called()
+                    captured["run"]()
+                    operation.assert_called_once_with()
 
     def test_press_key_enter_requires_approval(self):
         captured = {}
@@ -131,11 +137,11 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
             result = settings.computer_settings({
                 "action": "press_key", "value": "Enter",
             })
-        self.assertEqual(result, "[CONFIRMATION_PENDING]")
-        press.assert_not_called()
-        self.assertIn("Enter may submit", captured["detail"])
-        captured["run"]()
-        press.assert_called_once_with("Enter")
+            self.assertEqual(result, "[CONFIRMATION_PENDING]")
+            press.assert_not_called()
+            self.assertIn("Enter may submit", captured["detail"])
+            captured["run"]()
+            press.assert_called_once_with("Enter")
 
     def test_type_and_enter_requires_approval_of_exact_text(self):
         captured = {}
@@ -146,27 +152,15 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
                          captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
         ):
             result = settings.computer_settings({
-                "action": "type_text", "value": "Send this to Alex",
+                "action": "type_text",
+                "value": "Send this to Alex",
                 "press_enter": True,
             })
-        self.assertEqual(result, "[CONFIRMATION_PENDING]")
-        type_text.assert_not_called()
-        self.assertIn("Send this to Alex", captured["detail"])
-        captured["run"]()
-        type_text.assert_called_once_with("Send this to Alex", press_enter_after=True)
-
-    def test_wifi_confirmation_explains_connection_risk(self) -> None:
-        captured = {}
-
-        with (
-            patch.object(settings.confirm, "pending_title", return_value=""),
-            patch.object(settings.confirm, "request",
-                         side_effect=lambda **kwargs:
-                         captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
-        ):
-            settings.computer_settings({"action": "toggle_wifi"})
-
-        self.assertIn("MINDER loses its connection", captured["detail"])
+            self.assertEqual(result, "[CONFIRMATION_PENDING]")
+            type_text.assert_not_called()
+            self.assertIn("Send this to Alex", captured["detail"])
+            captured["run"]()
+            type_text.assert_called_once_with("Send this to Alex", press_enter_after=True)
 
 
 if __name__ == "__main__":
