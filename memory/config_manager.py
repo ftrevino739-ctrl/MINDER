@@ -340,9 +340,18 @@ def save_output_device(name: str) -> None:
     _patch_config(output_device=(name or "").strip())
 
 
-def get_plugin_enabled(plugin_name: str) -> bool:
-    """Plugins must be explicitly enabled; new or unknown plugins default to OFF."""
-    return load_api_keys().get("plugins_enabled", {}).get(plugin_name, False)
+def get_plugin_enabled(plugin_name: str, source_sha256: str = "") -> bool:
+    """Only enable the exact plugin source the user explicitly approved."""
+    data = load_api_keys()
+    enabled = data.get("plugins_enabled", {})
+    approved = data.get("plugin_source_hashes", {})
+    return bool(
+        isinstance(enabled, dict)
+        and enabled.get(plugin_name, False)
+        and isinstance(approved, dict)
+        and source_sha256
+        and approved.get(plugin_name) == source_sha256
+    )
 
 
 # ── Per-plugin settings ("tokens" / connection details) ───────────────────────
@@ -385,7 +394,10 @@ def save_plugin_config(namespace: str, values: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
-def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
+def save_plugin_enabled(
+    plugin_name: str, enabled: bool, source_sha256: str = "",
+) -> None:
+    """Persist explicit opt-in and the exact source revision approved by the user."""
     ensure_config_dir()
     data: dict = {}
     if CONFIG_FILE.exists():
@@ -396,9 +408,20 @@ def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
     plugins_cfg = data.get("plugins_enabled")
     if not isinstance(plugins_cfg, dict):
         plugins_cfg = {}
-    plugins_cfg[plugin_name] = enabled
+    plugins_cfg[plugin_name] = bool(enabled)
     data["plugins_enabled"] = plugins_cfg
+
+    hashes = data.get("plugin_source_hashes")
+    if not isinstance(hashes, dict):
+        hashes = {}
+    if enabled:
+        digest = str(source_sha256 or "").strip().lower()
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise ValueError("Enabling a plugin requires its inspected SHA-256 source hash.")
+        hashes[plugin_name] = digest
+    data["plugin_source_hashes"] = hashes
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
 
 # ── Providers: local STT/LLM/TTS and non-Gemini APIs ─────────────────────────
 # Stored here rather than in a file of their own, for the same reason plugin

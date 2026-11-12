@@ -91,7 +91,7 @@ class PluginRegistry:
     def get_tool_declarations(self) -> list[dict]:
         decls = []
         for name, rec in self._plugins.items():
-            if get_plugin_enabled(name):
+            if get_plugin_enabled(name, rec.source_sha256):
                 decl = {
                     "name": rec.name,
                     "description": rec.description,
@@ -122,7 +122,7 @@ class PluginRegistry:
         rec = self._plugins.get(name)
         if rec is None or not rec.valid:
             return f"Plugin '{name}' is not available."
-        if not get_plugin_enabled(name):
+        if not get_plugin_enabled(name, rec.source_sha256):
             return f"The '{name}' plugin is currently disabled."
 
         # A plugin's Python module is imported only after the user has explicitly
@@ -187,7 +187,8 @@ class PluginRegistry:
                 "file": rec.file,
                 "valid": rec.valid,
                 "error": rec.error,
-                "enabled": get_plugin_enabled(rec.name) if rec.valid else False,
+                "enabled": get_plugin_enabled(rec.name, rec.source_sha256) if rec.valid else False,
+                "source_sha256": rec.source_sha256,
             })
         return out
 

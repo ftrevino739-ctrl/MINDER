@@ -63,7 +63,7 @@ class PluginLoaderSecurityTests(unittest.TestCase):
         state = {"enabled": False}
         with patch.object(
             plugin_loader, "get_plugin_enabled",
-            side_effect=lambda _name: state["enabled"],
+            side_effect=lambda _name, _digest: state["enabled"],
         ):
             registry = plugin_loader.discover_plugins(
                 self.plugins_dir, set(), logger=lambda _message: None,
@@ -110,6 +110,43 @@ class PluginLoaderSecurityTests(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertFalse(registry.has("dynamic"))
         self.assertFalse(registry.list_for_ui()[0]["valid"])
+
+    def test_source_hash_must_match_persisted_approval_after_restart(self):
+        import hashlib
+        path = self._write_plugin()
+        approved_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        path.write_text(path.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+
+        with patch.object(
+            plugin_loader, "get_plugin_enabled",
+            side_effect=lambda _name, digest: digest == approved_hash,
+        ):
+            registry = plugin_loader.discover_plugins(
+                self.plugins_dir, set(), logger=lambda _message: None,
+            )
+            self.assertFalse(registry.get_tool_declarations())
+            result = registry.run("sample_plugin", {})
+        self.assertIn("disabled", result.lower())
+        self.assertFalse(self.marker.exists())
+
+    def test_plugin_enablement_persists_the_approved_source_hash(self):
+        import json
+        from memory import config_manager
+
+        config_path = self.root / "api_keys.json"
+        with (
+            patch.object(config_manager, "CONFIG_FILE", config_path),
+            patch.object(config_manager, "CONFIG_DIR", self.root),
+        ):
+            digest = "a" * 64
+            config_manager.save_plugin_enabled("sample_plugin", True, digest)
+            self.assertTrue(config_manager.get_plugin_enabled("sample_plugin", digest))
+            self.assertFalse(config_manager.get_plugin_enabled("sample_plugin", "b" * 64))
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["plugin_source_hashes"]["sample_plugin"], digest)
+
+            config_manager.save_plugin_enabled("sample_plugin", False, digest)
+            self.assertFalse(config_manager.get_plugin_enabled("sample_plugin", digest))
 
     def test_colliding_core_tool_name_is_rejected_without_import(self):
         self._write_plugin(name="open_app")

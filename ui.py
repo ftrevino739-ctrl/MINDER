@@ -1987,7 +1987,10 @@ class PluginManagerOverlay(QWidget):
         else:
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._style_toggle(btn, p["enabled"])
-            btn.clicked.connect(lambda _, name=p["name"], b=btn: self._toggle(name, b))
+            btn.clicked.connect(
+                lambda _, name=p["name"], source_hash=p.get("source_sha256", ""),
+                b=btn: self._toggle(name, source_hash, b)
+            )
         row.addWidget(btn)
         return row
 
@@ -2011,10 +2014,10 @@ class PluginManagerOverlay(QWidget):
                 QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
             """)
 
-    def _toggle(self, name: str, btn: QPushButton):
+    def _toggle(self, name: str, source_sha256: str, btn: QPushButton):
         from memory.config_manager import get_plugin_enabled, save_plugin_enabled
-        new_val = not get_plugin_enabled(name)
-        save_plugin_enabled(name, new_val)
+        new_val = not get_plugin_enabled(name, source_sha256)
+        save_plugin_enabled(name, new_val, source_sha256)
         self._style_toggle(btn, new_val)
 
 
