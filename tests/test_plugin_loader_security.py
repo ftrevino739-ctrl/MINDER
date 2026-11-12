@@ -133,10 +133,10 @@ class PluginLoaderSecurityTests(unittest.TestCase):
         import json
         from memory import config_manager
 
-        config_path = self.root / "api_keys.json"
+        config_path = self.plugins_dir.parent / "api_keys.json"
         with (
             patch.object(config_manager, "CONFIG_FILE", config_path),
-            patch.object(config_manager, "CONFIG_DIR", self.root),
+            patch.object(config_manager, "CONFIG_DIR", self.plugins_dir.parent),
         ):
             digest = "a" * 64
             config_manager.save_plugin_enabled("sample_plugin", True, digest)
