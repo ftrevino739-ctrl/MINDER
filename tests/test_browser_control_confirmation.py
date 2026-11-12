@@ -258,6 +258,73 @@ class BrowserConfirmationTests(unittest.TestCase):
         page.keyboard.press.assert_awaited_once_with("Enter")
         request.assert_not_called()
 
+
+    def test_unknown_browser_button_requires_approval(self):
+        locator = FakeLocator({
+            "label": "Continue", "formLabel": "", "identifiers": "continue-checkout",
+            "isActionControl": True, "isSubmitControl": False, "fields": [],
+        })
+        page = FakePage()
+        captured = {}
+        session = make_session()
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session._click_locator(page, locator, "Continue"))
+        self.assertEqual(result, "PENDING")
+        locator.click.assert_not_awaited()
+
+    def test_safe_navigation_button_does_not_require_approval(self):
+        locator = FakeLocator({
+            "label": "Home", "formLabel": "", "identifiers": "home-button",
+            "isActionControl": True, "isSubmitControl": False, "fields": [],
+        })
+        page = FakePage()
+        session = make_session()
+        with patch.object(browser_module.confirm, "request") as request:
+            result = asyncio.run(session._click_locator(page, locator, "Home"))
+        self.assertIn("Clicked", result)
+        locator.click.assert_awaited_once()
+        request.assert_not_called()
+
+    def test_enter_on_sensitive_button_outside_form_requires_approval(self):
+        context = {
+            "hasForm": False, "isEditable": False,
+            "activeControl": "Send message", "formLabel": "",
+            "submitters": [], "fields": [],
+        }
+        page = FakePage(context)
+        captured = {}
+        session = make_session()
+        session._get_page = AsyncMock(return_value=page)
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session.press("Enter"))
+        self.assertEqual(result, "PENDING")
+        page.keyboard.press.assert_not_awaited()
+        self.assertIn("Send message", captured["title"])
+
+    def test_browser_close_all_requires_human_approval(self):
+        captured = {}
+        with (
+            patch.object(browser_module._registry, "list_sessions", return_value="Chrome: 2 tabs"),
+            patch.object(browser_module._registry, "close_all") as close_all,
+            patch.object(
+                browser_module.confirm, "request",
+                side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+            ),
+        ):
+            result = browser_module.browser_control({"action": "close_all"})
+            self.assertEqual(result, "PENDING")
+            close_all.assert_not_called()
+            self.assertIn("Chrome: 2 tabs", captured["detail"])
+            captured["run"]()
+            close_all.assert_called_once()
+
+
     def test_ordinary_navigation_click_does_not_prompt(self):
         locator = FakeLocator({"label": "Home", "formLabel": "", "fields": []})
         page = FakePage()

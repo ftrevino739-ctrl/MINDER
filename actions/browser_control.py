@@ -803,7 +803,11 @@ class _BrowserSession:
 
     async def _control_details(self, locator) -> dict:
         return await locator.evaluate("""el => {
-            const form = el.form || el.closest('form');
+            const control = el.closest(
+                'button, input[type="button"], input[type="submit"], '
+                + 'input[type="image"], [role="button"]'
+            ) || el;
+            const form = control.form || control.closest('form');
             const fields = form ? [...form.querySelectorAll(
                 'input, textarea, select, [contenteditable="true"]'
             )].map(field => {
@@ -819,11 +823,22 @@ class _BrowserSession:
                 return value ? label + ': ' + String(value).slice(0, 2000) : null;
             }).filter(Boolean) : [];
             return {
-                label: (el.getAttribute('aria-label') || el.innerText
-                    || el.value || el.getAttribute('title') || '').trim(),
+                label: (control.getAttribute('aria-label') || control.innerText
+                    || control.value || control.getAttribute('title') || '').trim(),
                 formLabel: form ? (form.getAttribute('aria-label')
                     || form.getAttribute('name') || '') : '',
-                isSubmitControl: Boolean(form && el.matches(
+                identifiers: [
+                    control.id,
+                    control.getAttribute('name'),
+                    control.getAttribute('data-action'),
+                    control.getAttribute('data-testid'),
+                    control.getAttribute('title')
+                ].filter(Boolean).join(' '),
+                isActionControl: control.matches(
+                    'button, input[type="button"], input[type="submit"], '
+                    + 'input[type="image"], [role="button"]'
+                ),
+                isSubmitControl: Boolean(form && control.matches(
                     'button:not([type]), button[type="submit"], '
                     + 'input[type="submit"], input[type="image"]'
                 )),
@@ -888,7 +903,16 @@ class _BrowserSession:
         details = await self._control_details(locator)
         label = (details.get("label") or "").strip()
         form_label = (details.get("formLabel") or "").strip()
-        if not details.get("isSubmitControl") and not requires_human_approval(label, form_label, description):
+        identifiers = (details.get("identifiers") or "").strip()
+        requires_approval = (
+            details.get("isSubmitControl")
+            or requires_human_approval(label, form_label, identifiers, description)
+            or (
+                details.get("isActionControl")
+                and requires_screen_click_approval(label or description)
+            )
+        )
+        if not requires_approval:
             await locator.click(timeout=8_000)
             return f"Clicked: {label or description or 'element'}"
 
@@ -966,6 +990,13 @@ class _BrowserSession:
                 || active?.getAttribute('name')
                 || ''
             ).trim();
+            const activeControl = (
+                active?.getAttribute('aria-label')
+                || active?.innerText
+                || active?.value
+                || active?.getAttribute('title')
+                || ''
+            ).trim();
             const isEditable = Boolean(active && (
                 active.matches('textarea, [contenteditable="true"], [role="textbox"]')
                 || (active.matches('input') && ![
@@ -986,6 +1017,7 @@ class _BrowserSession:
                 hasForm: false,
                 isEditable: isEditable && !isSearch,
                 formLabel: activeLabel,
+                activeControl,
                 submitters: [],
                 fields: activeField ? [activeField] : []
             };
@@ -1012,6 +1044,7 @@ class _BrowserSession:
                 isEditable: isEditable && !isSearch,
                 formLabel: form.getAttribute('aria-label')
                     || form.getAttribute('name') || activeLabel,
+                activeControl,
                 submitters,
                 fields: activeField && !fields.some(value => value.startsWith(
                     (activeLabel || 'Focused field') + ':'
@@ -1051,6 +1084,7 @@ class _BrowserSession:
                 context = await self._form_submission_context(page)
                 if (
                     context.get("isEditable")
+                    or requires_screen_click_approval(context.get("activeControl", ""))
                     or (
                         context.get("hasForm")
                         and requires_form_submission_approval(
@@ -1063,7 +1097,7 @@ class _BrowserSession:
                     action_label = next(
                         (label for label in context.get("submitters", [])
                          if requires_human_approval(label)),
-                        context.get("formLabel") or "submit form",
+                        context.get("activeControl") or context.get("formLabel") or "submit form",
                     )
                     detail = (
                         f"Website: {page_title}\n"
@@ -1319,13 +1353,34 @@ def browser_control(
         return result
 
     if action == "close_all":
-        result = _registry.close_all()
+        sessions = _registry.list_sessions()
+        detail = (
+            "MINDER-managed browser sessions:\n"
+            + str(sessions)
+            + "\n\nClosing these sessions closes their managed tabs and may "
+            "discard unsaved forms or drafts."
+        )
+        result = _request_browser_lifecycle_confirmation(
+            "Approve closing all MINDER browser sessions",
+            detail,
+            run=lambda: _registry.close_all(),
+        )
         _log(player, result)
         return result
 
     if action == "close":
         target = browser or _registry._active_browser
-        result = _registry.close_one(target) if target else "No browser specified."
+        if not target:
+            return "No browser specified."
+        detail = (
+            f"Browser session: {target}\n\n"
+            "Closing this managed browser session may discard unsaved forms or drafts."
+        )
+        result = _request_browser_lifecycle_confirmation(
+            f"Approve closing browser session: {target}",
+            detail,
+            run=lambda: _registry.close_one(target),
+        )
         _log(player, result)
         return result
 
@@ -1409,15 +1464,33 @@ def browser_control(
         elif action == "press":
             result = sess.run(sess.press(params.get("key", "Enter")))
         elif action == "close_tab":
-            result = sess.run(sess.close_tab())
+            current_url = sess.run(sess.get_url())
+            detail = (
+                f"Browser: {browser or 'active browser'}\n"
+                f"Tab: {current_url}\n\n"
+                "Closing this tab may discard unsent messages, form entries or drafts."
+            )
+            result = _request_browser_lifecycle_confirmation(
+                "Approve closing the active browser tab",
+                detail,
+                run=lambda: sess.run(sess.close_tab()),
+            )
         elif action == "screenshot":
             result = sess.run(sess.screenshot(params.get("path")))
-        elif action == "back":
-            result = sess.run(sess.back())
-        elif action == "forward":
-            result = sess.run(sess.forward())
-        elif action == "reload":
-            result = sess.run(sess.reload())
+        elif action in ("back", "forward", "reload"):
+            nav_word = {"back": "go back", "forward": "go forward", "reload": "reload"}[action]
+            current_url = sess.run(sess.get_url())
+            detail = (
+                f"Browser: {browser or 'active browser'}\n"
+                f"Current page: {current_url}\n\n"
+                "This navigation may discard unsent messages, form entries or drafts."
+            )
+            navigation = {"back": sess.back, "forward": sess.forward, "reload": sess.reload}[action]
+            result = _request_browser_lifecycle_confirmation(
+                f"Approve browser action: {nav_word}",
+                detail,
+                run=lambda: sess.run(navigation()),
+            )
         else:
             result = f"Unknown browser action: '{action}'"
 
@@ -1428,6 +1501,27 @@ def browser_control(
 
     _log(player, result)
     return result
+
+
+def _request_browser_lifecycle_confirmation(title: str, detail: str, run) -> str:
+    """Confirm closing or leaving a browser surface that may contain unsaved work."""
+    if len(detail) > confirm.MAX_DETAIL_CHARS:
+        return outcome.failed("browser_control",
+                              "the browser action is too long to display for approval")
+    pending = confirm.pending_title()
+    if pending:
+        return outcome.ask(
+            "browser_control",
+            "There is already a confirmation waiting on screen. "
+            "The user must answer it before another browser action can be approved.",
+            pending=pending,
+        )
+    return confirm.request(
+        key="browser-lifecycle",
+        title=title,
+        detail=detail,
+        run=run,
+    )
 
 
 def _log(player, text: str):
@@ -1443,8 +1537,9 @@ TOOL = {
     "description": (
         "Controls the web browser: open an address, search, click, type, "
         "scroll, read the page, manage tabs, go back and forward. "
-        "High-impact submit/send/publish/purchase/delete controls, including "
-        "form submissions by Enter, require human approval on the HUD. "
+        "High-impact submit/send/publish/purchase/delete controls, unknown action "
+        "buttons, form submissions by Enter, and closing/reloading tabs or browser "
+        "sessions require human approval on the HUD. "
         "THIS TOOL OPENS THE BROWSER ITSELF. Never call open_app for the "
         "browser first - doing both launches it twice, the second copy on a "
         "different profile with none of the user's sign-ins. 'Open Chrome and "

@@ -12,12 +12,15 @@ _SENSITIVE_ACTION = re.compile(
     r"(?<![\w])(?:send|submit|post|publish|upload|buy|purchase|pay|payment|"
     r"transfer|delete|remove|cancel|book|reserve|subscribe|unsubscribe|"
     r"place\s+order|checkout|confirm|approve|authorize|allow|install|"
-    r"reset|revoke|share|connect|disconnect|save\s+changes|"
+    r"reset|revoke|share|connect|disconnect|save\s+changes|follow|unfollow|"
+    r"like|react|vote|report|flag|join|accept|agree|consent|"
     r"enviar|mandar|publicar|subir|comprar|pagar|transferir|eliminar|borrar|"
     r"cancelar|reservar|suscribir|ordenar|confirmar|autorizar|permitir|"
-    r"instalar|restablecer|revocar|compartir)(?![\w])",
+    r"instalar|restablecer|revocar|compartir|seguir|reaccionar|votar|"
+    r"denunciar|unirse|aceptar|consentir)(?![\w])",
     re.IGNORECASE,
 )
+
 
 
 
@@ -66,7 +69,8 @@ def normalize_browser_url(value: str) -> str:
 
 
 _SAFE_SEARCH_SUBMITTER = re.compile(
-    r"^(?:search|search now|find|find now|go|buscar|buscar ahora)$",
+    r"^(?:search(?:\s+[\w -]{1,40})?|find|find now|go|"
+    r"buscar(?:\s+[\w -]{1,40})?)$",
     re.IGNORECASE,
 )
 
@@ -80,7 +84,9 @@ def requires_form_submission_approval(form_label: str, submitters: list[str]) ->
 
 
 _SAFE_SCREEN_TARGET = re.compile(
-    r"^(?:home|back|forward|next|previous|menu|open menu|close menu|"
+    r"^(?:home|back|forward|next|next page|previous|previous page|"
+    r"menu|open menu|close menu|load more|show more|view more|see more|"
+    r"show results|sort|filter|
     r"search|new tab|play|pause|resume|volume up|volume down|mute|"
     r"full ?screen|fullscreen|minimi[sz]e|maximi[sz]e|task manager|"
     r"settings|open settings|show desktop|"
