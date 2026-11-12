@@ -165,3 +165,21 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class XRandRTests(unittest.TestCase):
+    def test_xrandr_brightness_uses_argument_vector_without_shell(self):
+        class Completed:
+            stdout = "eDP-1 connected primary 1920x1080+0+0\\n    Brightness: 0.7\\n"
+            returncode = 0
+
+        with patch.object(settings.subprocess, "run", return_value=Completed()) as run:
+            result = settings._adjust_xrandr_brightness(0.1)
+
+        self.assertTrue(result)
+        run.assert_any_call(
+            ["xrandr", "--output", "eDP-1", "--brightness", "0.800"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=5,
+        )
+        self.assertTrue(all("shell" not in call.kwargs for call in run.call_args_list))
