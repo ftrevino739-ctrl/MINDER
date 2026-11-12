@@ -759,16 +759,12 @@ def _build_project(
         log(f"Installing {', '.join(dependencies)}...")
         install_result = _install_dependencies(dependencies, project_dir)
         log(install_result)
-        if "[CONFIRMATION_PENDING]" in install_result:
+        if not install_result.startswith("All dependencies are already installed:"):
             return (
                 f"Project files were generated at {project_dir}. "
-                "Installing its missing dependencies now requires human approval. "
+                "The project cannot continue until its dependencies have been "
+                "reviewed and installed with human approval. "
                 + install_result
-            )
-        if "status=failed" in install_result:
-            return (
-                f"Project files were generated at {project_dir}, but dependency "
-                f"installation was refused: {install_result}"
             )
 
     _open_vscode(project_dir)
@@ -801,13 +797,13 @@ def _build_project(
             break
 
         error_type = _classify_error(last_output)
-        if error_type == "dependency_error" and auto_installs < 3:
-            installed = _try_auto_install(last_output, project_dir)
-            if installed:
-                auto_installs += 1
-                log("Missing dependency installed, retrying...")
-                time.sleep(1)
-                continue
+        if error_type == "dependency_error":
+            return (
+                f"Project files were generated at {project_dir}, but execution "
+                "reported a missing dependency. MINDER did not install anything "
+                "automatically; review the package and install it with approval.\n\n"
+                + last_output[:600]
+            )
 
         log(f"Fixing errors (type: {error_type})...")
         try:

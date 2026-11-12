@@ -75,15 +75,14 @@ class DevAgentProjectSafetyTests(unittest.TestCase):
                 ) as run,
             ):
                 result = dev_agent._run_project("python main.py --name 'my app'", project, 60)
-
-            self.assertIn("[CONFIRMATION_PENDING]", result)
-            run.assert_not_called()
-            self.assertIn("python", captured["detail"])
-            self.assertIn("'my app'", captured["detail"])
-            approved = captured["run"]()
-            self.assertIn("status=done", approved)
-            run.assert_called_once()
-            self.assertIs(run.call_args.kwargs["shell"], False)
+                self.assertIn("[CONFIRMATION_PENDING]", result)
+                run.assert_not_called()
+                self.assertIn("python", captured["detail"])
+                self.assertIn("'my app'", captured["detail"])
+                approved = captured["run"]()
+                self.assertIn("status=done", approved)
+                run.assert_called_once()
+                self.assertIs(run.call_args.kwargs["shell"], False)
 
     def test_run_project_refuses_projects_outside_managed_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -119,14 +118,13 @@ class DevAgentProjectSafetyTests(unittest.TestCase):
             ):
                 run.return_value.returncode = 1
                 result = dev_agent._install_dependencies(["requests>=2.0"], root)
-
-            self.assertIn("[CONFIRMATION_PENDING]", result)
-            self.assertIn("requests>=2.0", captured["detail"])
-            self.assertEqual(run.call_count, 1)  # only "pip show", never "pip install"
-            captured["run"]()
-            self.assertEqual(run.call_count, 2)
-            self.assertEqual(run.call_args.args[0][-2:], ["install", "requests>=2.0"])
-            self.assertIs(run.call_args.kwargs["shell"], False)
+                self.assertIn("[CONFIRMATION_PENDING]", result)
+                self.assertIn("requests>=2.0", captured["detail"])
+                self.assertEqual(run.call_count, 1)  # only "pip show", never "pip install"
+                captured["run"]()
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.args[0][-2:], ["install", "requests>=2.0"])
+                self.assertIs(run.call_args.kwargs["shell"], False)
 
 
 if __name__ == "__main__":
