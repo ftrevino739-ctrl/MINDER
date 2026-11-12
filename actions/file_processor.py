@@ -19,14 +19,20 @@ Supported types:
 import os
 import re
 import json
+import hashlib
+import shlex
 import shutil
+import stat
 import subprocess
+import sys
+import tarfile
 import tempfile
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 from datetime import datetime
 
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
-from core import gemini
+from core import confirm, gemini, outcome
 
 def _get_api_key() -> str:
     config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
@@ -81,9 +87,20 @@ def _file_size_str(path: Path) -> str:
     return f"{size/1024**3:.1f} GB"
 
 def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
-    ext  = new_ext or src.suffix
-    name = f"{src.stem}_{suffix}{ext}"
-    return src.parent / name
+    """Choose a new output name without selecting an existing file or symlink."""
+    source = Path(src).expanduser()
+    parent = source.parent.resolve()
+    home = Path.home().resolve()
+    if parent != home and not parent.is_relative_to(home):
+        raise ValueError("Generated output is restricted to folders inside the user's home directory.")
+    ext = new_ext or source.suffix
+    base = f"{source.stem}_{suffix}"
+    for index in range(1, 10_001):
+        name = f"{base}{ext}" if index == 1 else f"{base}_{index}{ext}"
+        candidate = parent / name
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+    raise FileExistsError("Could not find an unused output filename.")
 
 def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
     try:
@@ -457,25 +474,94 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
 
     return _process_json(path, "analyze", {"instruction": action})
 
+def _run_reviewed_code(path: Path, command: list[str],
+                       expected_signature: tuple[int, int, str]) -> str:
+    try:
+        current = path.stat()
+        signature = (
+            current.st_size,
+            current.st_mtime_ns,
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+        if signature != expected_signature:
+            return outcome.failed(
+                "file_processor",
+                "the Python file changed while execution approval was pending; it was not run",
+                path=str(path),
+            )
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            cwd=str(path.parent),
+            shell=False,
+        )
+        output = (result.stdout or "") + (("\n" + result.stderr) if result.stderr else "")
+        if result.returncode == 0:
+            return outcome.done(
+                "file_processor", exit_code=0, output=output[:4_000], verified=True,
+            )
+        return outcome.failed(
+            "file_processor",
+            f"the approved code exited with code {result.returncode}",
+            exit_code=result.returncode,
+            output=output[:4_000],
+        )
+    except subprocess.TimeoutExpired:
+        return outcome.failed("file_processor", "code execution timed out after 30 seconds")
+    except Exception as exc:
+        return outcome.failed("file_processor", f"code execution failed: {exc}")
+
+
 def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
     action  = action or "explain"
     content = path.read_text(encoding="utf-8", errors="ignore")
     ext     = path.suffix.lstrip(".")
 
     if action == "run":
-        if ext == "py":
-            try:
-                result = subprocess.run(
-                    ["python", str(path)],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+        if ext != "py":
+            return f"Direct execution not supported for .{ext} files."
+        try:
+            target = path.expanduser().resolve(strict=True)
+            home = Path.home().resolve()
+            if target != home and not target.is_relative_to(home):
+                return outcome.failed(
+                    "file_processor",
+                    "running code is restricted to files inside the user's home folder",
+                    path=str(target),
                 )
-                out = result.stdout or result.stderr
-                return f"Output:\n{out[:2000]}" if out else "No output."
-            except subprocess.TimeoutExpired:
-                return "Execution timed out (30s)."
-            except Exception as e:
-                return f"Run failed: {e}"
-        return f"Direct execution not supported for .{ext} files."
+            if target.stat().st_size > 2_000_000:
+                return outcome.failed(
+                    "file_processor",
+                    "the code file is too large for safe execution review",
+                    path=str(target),
+                )
+            stat_now = target.stat()
+            signature = (
+                stat_now.st_size,
+                stat_now.st_mtime_ns,
+                hashlib.sha256(target.read_bytes()).hexdigest(),
+            )
+            command = [sys.executable, str(target)]
+            detail = (
+                f"File: {target}\n"
+                f"Working directory: {target.parent}\n"
+                f"Exact command: {shlex.join(command)}\n"
+                "Timeout: 30 seconds\n\n"
+                "Running this file executes code with the current user's "
+                "permissions. Review the file and command before approving."
+            )
+            return confirm.request(
+                key=f"file-processor-run:{target}",
+                title=f"Approve running Python file: {target.name}",
+                detail=detail,
+                run=lambda: _run_reviewed_code(target, command, signature),
+            )
+        except Exception as exc:
+            return outcome.failed("file_processor", f"could not prepare code execution: {exc}")
 
     if action == "info":
         lines = content.count("\n")
@@ -715,37 +801,301 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
 
     return f"Unknown video action: '{action}'. Try: info, trim, extract_audio, extract_frame, compress, transcribe, convert"
 
+_ARCHIVE_MAX_FILES = 2_000
+_ARCHIVE_MAX_MEMBER_BYTES = 100 * 1024 * 1024
+_ARCHIVE_MAX_TOTAL_BYTES = 500 * 1024 * 1024
+
+
+def _archive_member_parts(name: str) -> tuple[str, ...] | None:
+    if not isinstance(name, str) or not name or any(ord(char) < 32 for char in name):
+        return None
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or PurePosixPath(normalized).is_absolute():
+        return None
+    parts = normalized.rstrip("/").split("/")
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        return None
+    if ":" in parts[0]:
+        return None
+    return tuple(parts)
+
+
+def _safe_archive_destination(destination: Path) -> bool:
+    try:
+        dest = Path(destination).expanduser()
+        if dest.is_symlink():
+            return False
+        resolved = dest.resolve(strict=False)
+        home = Path.home().resolve()
+        return resolved != home and resolved.is_relative_to(home)
+    except Exception:
+        return False
+
+
+def _archive_plan(path: Path) -> tuple[list[dict], str]:
+    entries: list[dict] = []
+    total_bytes = 0
+    seen: set[str] = set()
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            members = archive.infolist()
+            if len(members) > _ARCHIVE_MAX_FILES:
+                return [], f"archive has too many entries (maximum {_ARCHIVE_MAX_FILES})"
+            for info in members:
+                parts = _archive_member_parts(info.filename)
+                if parts is None:
+                    return [], f"unsafe archive path: {info.filename!r}"
+                name = "/".join(parts)
+                if name in seen:
+                    return [], f"duplicate archive entry: {name}"
+                seen.add(name)
+                if info.flag_bits & 0x1:
+                    return [], f"encrypted archive entry is not supported: {name}"
+                mode = (info.external_attr >> 16) & 0xFFFF
+                kind = stat.S_IFMT(mode)
+                if kind == stat.S_IFLNK:
+                    return [], f"symbolic links are not allowed in archives: {name}"
+                is_dir = info.is_dir() or kind == stat.S_IFDIR
+                if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    return [], f"special archive entry is not allowed: {name}"
+                size = 0 if is_dir else int(info.file_size)
+                if size < 0 or size > _ARCHIVE_MAX_MEMBER_BYTES:
+                    return [], f"archive member is too large: {name}"
+                total_bytes += size
+                if total_bytes > _ARCHIVE_MAX_TOTAL_BYTES:
+                    return [], "archive exceeds the total extraction size limit"
+                entries.append({"name": name, "directory": is_dir, "size": size})
+    else:
+        try:
+            with tarfile.open(path, mode="r:*") as archive:
+                members = archive.getmembers()
+                if len(members) > _ARCHIVE_MAX_FILES:
+                    return [], f"archive has too many entries (maximum {_ARCHIVE_MAX_FILES})"
+                for info in members:
+                    parts = _archive_member_parts(info.name)
+                    if parts is None:
+                        return [], f"unsafe archive path: {info.name!r}"
+                    name = "/".join(parts)
+                    if name in seen:
+                        return [], f"duplicate archive entry: {name}"
+                    seen.add(name)
+                    if info.isdir():
+                        is_dir, size = True, 0
+                    elif info.isfile():
+                        is_dir, size = False, int(info.size)
+                    else:
+                        return [], f"links and special archive entries are not allowed: {name}"
+                    if size < 0 or size > _ARCHIVE_MAX_MEMBER_BYTES:
+                        return [], f"archive member is too large: {name}"
+                    total_bytes += size
+                    if total_bytes > _ARCHIVE_MAX_TOTAL_BYTES:
+                        return [], "archive exceeds the total extraction size limit"
+                    entries.append({"name": name, "directory": is_dir, "size": size})
+        except tarfile.ReadError as exc:
+            return [], f"unsupported or invalid archive: {exc}"
+    return entries, ""
+
+
+def _extract_archive_after_approval(path: Path, destination: Path,
+                                    expected_entries: list[dict]) -> str:
+    try:
+        if not _safe_archive_destination(destination):
+            return outcome.failed(
+                "file_processor",
+                "the extraction destination is outside the user's home folder or is a symbolic link",
+                destination=str(destination),
+            )
+        current_entries, error = _archive_plan(path)
+        if error:
+            return outcome.failed("file_processor", error, archive=str(path))
+        if current_entries != expected_entries:
+            return outcome.failed(
+                "file_processor",
+                "the archive changed while extraction approval was pending; nothing was extracted",
+            )
+        destination = destination.expanduser().resolve(strict=False)
+        if destination.exists() and (
+            not destination.is_dir() or any(destination.iterdir())
+        ):
+            return outcome.failed(
+                "file_processor",
+                "the destination is no longer empty; nothing was extracted",
+                destination=str(destination),
+            )
+
+        destination.mkdir(parents=True, exist_ok=True)
+        total_files = 0
+        total_written = 0
+
+        def target_for(name: str) -> Path:
+            parts = _archive_member_parts(name)
+            if parts is None:
+                raise ValueError(f"unsafe archive path at extraction time: {name!r}")
+            target = destination.joinpath(*parts)
+            resolved = target.resolve(strict=False)
+            if resolved != destination and not resolved.is_relative_to(destination):
+                raise ValueError(f"archive path escaped the destination: {name!r}")
+            return target
+
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                for info in archive.infolist():
+                    parts = _archive_member_parts(info.filename)
+                    if parts is None:
+                        raise ValueError(f"unsafe archive path at extraction time: {info.filename!r}")
+                    name = "/".join(parts)
+                    target = target_for(name)
+                    if info.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    written = 0
+                    with archive.open(info, "r") as source:
+                        with target.open("xb") as output:
+                            while True:
+                                chunk = source.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                written += len(chunk)
+                                if written > int(info.file_size) or written > _ARCHIVE_MAX_MEMBER_BYTES:
+                                    raise ValueError(f"archive member expanded beyond its declared size: {name}")
+                                output.write(chunk)
+                    if written != int(info.file_size):
+                        raise ValueError(f"archive member had an unexpected size: {name}")
+                    total_files += 1
+                    total_written += written
+        else:
+            with tarfile.open(path, mode="r:*") as archive:
+                for info in archive.getmembers():
+                    parts = _archive_member_parts(info.name)
+                    if parts is None:
+                        raise ValueError(f"unsafe archive path at extraction time: {info.name!r}")
+                    name = "/".join(parts)
+                    target = target_for(name)
+                    if info.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    source = archive.extractfile(info)
+                    if source is None:
+                        raise ValueError(f"could not read archive member: {name}")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    written = 0
+                    with source:
+                        with target.open("xb") as output:
+                            while True:
+                                chunk = source.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                written += len(chunk)
+                                if written > int(info.size) or written > _ARCHIVE_MAX_MEMBER_BYTES:
+                                    raise ValueError(f"archive member expanded beyond its declared size: {name}")
+                                output.write(chunk)
+                    if written != int(info.size):
+                        raise ValueError(f"archive member had an unexpected size: {name}")
+                    total_files += 1
+                    total_written += written
+
+        return outcome.done(
+            "file_processor",
+            extracted_files=total_files,
+            extracted_bytes=total_written,
+            destination=str(destination),
+            verified=True,
+        )
+    except FileExistsError as exc:
+        return outcome.failed(
+            "file_processor",
+            f"a file appeared at the extraction destination; it was not overwritten: {exc}",
+        )
+    except Exception as exc:
+        return outcome.failed(
+            "file_processor",
+            f"archive extraction stopped; some new files may already have been extracted: {exc}",
+            destination=str(destination),
+        )
+
+
 def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "list"
 
     if action == "list":
         try:
-            import zipfile, tarfile
-            ext = path.suffix.lower()
-            if ext == ".zip":
-                with zipfile.ZipFile(path) as z:
-                    names = z.namelist()
-            elif ext in (".tar", ".gz", ".bz2", ".xz"):
-                with tarfile.open(path) as t:
-                    names = t.getnames()
+            if zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path) as archive:
+                    names = archive.namelist()
+            elif tarfile.is_tarfile(path):
+                with tarfile.open(path, mode="r:*") as archive:
+                    names = archive.getnames()
             else:
-                return f"Unsupported archive format: {ext}"
+                return f"Unsupported archive format: {path.suffix.lower()}"
             preview = "\n".join(names[:30])
-            suffix  = f"\n... and {len(names)-30} more" if len(names) > 30 else ""
+            suffix = f"\n... and {len(names)-30} more" if len(names) > 30 else ""
             return f"Archive contains {len(names)} files:\n{preview}{suffix}"
-        except Exception as e:
-            return f"List failed: {e}"
+        except Exception as exc:
+            return f"List failed: {exc}"
 
     if action == "extract":
-        dest = Path(params.get("destination", str(path.parent / path.stem)))
-        dest.mkdir(parents=True, exist_ok=True)
+        destination = Path(params.get("destination") or (path.parent / path.stem)).expanduser()
+        if not _safe_archive_destination(destination):
+            return outcome.failed(
+                "file_processor",
+                "the extraction destination must be a folder inside the user's home folder",
+                destination=str(destination),
+            )
         try:
-            shutil.unpack_archive(path, dest)
-            return f"Extracted to: {dest}"
-        except Exception as e:
-            return f"Extract failed: {e}"
+            entries, error = _archive_plan(path)
+        except Exception as exc:
+            return outcome.failed("file_processor", f"could not inspect the archive: {exc}")
+        if error:
+            return outcome.failed("file_processor", error, archive=str(path))
+        if not entries:
+            return "The archive contains no extractable entries."
+
+        resolved = destination.resolve(strict=False)
+        if resolved.exists() and (
+            not resolved.is_dir() or any(resolved.iterdir())
+        ):
+            return outcome.failed(
+                "file_processor",
+                "the extraction destination must be empty; existing files will not be overwritten",
+                destination=str(resolved),
+            )
+
+        lines = [
+            f"Archive: {path}",
+            f"Destination: {resolved}",
+            f"Entries: {len(entries)}",
+            "",
+        ]
+        lines.extend(
+            f"{'DIR ' if item['directory'] else 'FILE'} {item['name']} "
+            f"({item['size']} bytes)"
+            for item in entries[:250]
+        )
+        if len(entries) > 250:
+            lines.append(f"[Preview capped at 250 entries; total: {len(entries)}]")
+        detail = "\n".join(lines)
+        if len(detail) > confirm.MAX_DETAIL_CHARS:
+            return outcome.failed(
+                "file_processor",
+                "the extraction plan is too large to display in full for safe approval; nothing was extracted",
+            )
+        pending = confirm.pending_title()
+        if pending:
+            return outcome.ask(
+                "file_processor",
+                "There is already a confirmation waiting on screen. Answer it before extracting another archive.",
+                pending=pending,
+            )
+        return confirm.request(
+            key=f"archive-extract:{resolved}",
+            title=f"Approve extracting {path.name}",
+            detail=detail,
+            run=lambda: _extract_archive_after_approval(path, resolved, entries),
+        )
 
     return f"Unknown archive action: '{action}'. Try: list, extract"
+
 
 def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "summarize"
@@ -853,7 +1203,7 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "file_processor",
-    "description": "Processes any file that the user has uploaded or dropped onto the interface. Use this when the user refers to an uploaded file and wants an action on it. Supports: images (describe/ocr/resize/compress/convert), PDFs (summarize/extract_text/to_word), Word docs & text files (summarize/fix/reformat/translate), CSV/Excel (analyze/stats/filter/sort/convert), JSON/XML (validate/format/analyze), code files (explain/review/fix/optimize/run/document/test), audio (transcribe/trim/convert/info), video (trim/extract_audio/extract_frame/compress/transcribe/info), archives (list/extract), presentations (summarize/extract_text). ALWAYS call this tool when a file has been uploaded and the user gives a command about it. If the user's command is ambiguous, pick the most logical action for that file type.",
+    "description": "Processes files uploaded or selected by the user. Supports image, PDF, text, spreadsheet, JSON/XML, code, audio, video, archive and presentation tasks. Running a Python file requires HUD approval of the exact file and command. Archive extraction requires approval of the full extraction plan and is restricted to a new or empty folder inside the user's home folder; traversal paths, links and special entries are rejected. Generated output files use unused names and do not overwrite existing outputs. ALWAYS call this tool when the user gives a command about an uploaded file; use the most logical action for its file type.",
     # Used in place of `description` only when a small model is on a tool
     # budget - Gemini still gets the full text. See providers/schema.py.
     "brief": (
