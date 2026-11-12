@@ -964,6 +964,13 @@ _ARCHIVE_MAX_MEMBER_BYTES = 100 * 1024 * 1024
 _ARCHIVE_MAX_TOTAL_BYTES = 500 * 1024 * 1024
 
 
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
 def _archive_member_parts(name: str) -> tuple[str, ...] | None:
     if not isinstance(name, str) or not name or any(ord(char) < 32 for char in name):
         return None
@@ -973,8 +980,12 @@ def _archive_member_parts(name: str) -> tuple[str, ...] | None:
     parts = normalized.rstrip("/").split("/")
     if not parts or any(part in {"", ".", ".."} for part in parts):
         return None
-    if ":" in parts[0]:
-        return None
+    for part in parts:
+        if ":" in part or part.endswith((" ", ".")) or any(char in '<>:"|?*' for char in part):
+            return None
+        stem = part.split(".", 1)[0].upper()
+        if stem in _WINDOWS_RESERVED_NAMES:
+            return None
     return tuple(parts)
 
 
@@ -988,6 +999,15 @@ def _safe_archive_destination(destination: Path) -> bool:
         return resolved != home and resolved.is_relative_to(home)
     except Exception:
         return False
+
+
+def _archive_signature(path: Path) -> tuple[int, int, str]:
+    stat_result = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return stat_result.st_size, stat_result.st_mtime_ns, digest.hexdigest()
 
 
 def _archive_plan(path: Path) -> tuple[list[dict], str]:
@@ -1004,9 +1024,10 @@ def _archive_plan(path: Path) -> tuple[list[dict], str]:
                 if parts is None:
                     return [], f"unsafe archive path: {info.filename!r}"
                 name = "/".join(parts)
-                if name in seen:
-                    return [], f"duplicate archive entry: {name}"
-                seen.add(name)
+                collision_key = name.casefold()
+                if collision_key in seen:
+                    return [], f"duplicate or case-colliding archive entry: {name}"
+                seen.add(collision_key)
                 if info.flag_bits & 0x1:
                     return [], f"encrypted archive entry is not supported: {name}"
                 mode = (info.external_attr >> 16) & 0xFFFF
@@ -1034,9 +1055,10 @@ def _archive_plan(path: Path) -> tuple[list[dict], str]:
                     if parts is None:
                         return [], f"unsafe archive path: {info.name!r}"
                     name = "/".join(parts)
-                    if name in seen:
-                        return [], f"duplicate archive entry: {name}"
-                    seen.add(name)
+                    collision_key = name.casefold()
+                    if collision_key in seen:
+                        return [], f"duplicate or case-colliding archive entry: {name}"
+                    seen.add(collision_key)
                     if info.isdir():
                         is_dir, size = True, 0
                     elif info.isfile():
@@ -1055,13 +1077,21 @@ def _archive_plan(path: Path) -> tuple[list[dict], str]:
 
 
 def _extract_archive_after_approval(path: Path, destination: Path,
-                                    expected_entries: list[dict]) -> str:
+                                    expected_entries: list[dict],
+                                    expected_signature: tuple[int, int, str]) -> str:
     try:
         if not _safe_archive_destination(destination):
             return outcome.failed(
                 "file_processor",
                 "the extraction destination is outside the user's home folder or is a symbolic link",
                 destination=str(destination),
+            )
+        current_signature = _archive_signature(path)
+        if current_signature != expected_signature:
+            return outcome.failed(
+                "file_processor",
+                "the archive bytes changed while extraction approval was pending; nothing was extracted",
+                archive=str(path),
             )
         current_entries, error = _archive_plan(path)
         if error:
@@ -1201,6 +1231,7 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
                 destination=str(destination),
             )
         try:
+            archive_signature = _archive_signature(path)
             entries, error = _archive_plan(path)
         except Exception as exc:
             return outcome.failed("file_processor", f"could not inspect the archive: {exc}")
@@ -1249,7 +1280,9 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             key=f"archive-extract:{resolved}",
             title=f"Approve extracting {path.name}",
             detail=detail,
-            run=lambda: _extract_archive_after_approval(path, resolved, entries),
+            run=lambda: _extract_archive_after_approval(
+                path, resolved, entries, archive_signature,
+            ),
         )
 
     return f"Unknown archive action: '{action}'. Try: list, extract"
