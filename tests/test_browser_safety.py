@@ -56,6 +56,17 @@ class BrowserSafetyTests(unittest.TestCase):
             with self.subTest(description=description):
                 self.assertFalse(requires_screen_click_approval(description))
 
+    def test_screen_click_unknown_targets_require_approval(self):
+        for description in ("Continue", "Confirm", "Share document", "button 3"):
+            with self.subTest(description=description):
+                self.assertTrue(requires_screen_click_approval(description))
+
+    def test_screen_click_safe_navigation_targets_do_not_require_approval(self):
+        for description in ("Home", "Back", "Search", "New tab", "Play",
+                            "Settings", "Open Calculator", "Buscar"):
+            with self.subTest(description=description):
+                self.assertFalse(requires_screen_click_approval(description))
+
     def test_ignores_ordinary_navigation_controls(self):
         for label in ("Home", "Open menu", "Next page", "Search", "Learn more"):
             with self.subTest(label=label):

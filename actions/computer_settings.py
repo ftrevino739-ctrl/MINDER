@@ -23,6 +23,7 @@ def _configure_pyautogui(module) -> None:
 pyautogui = LazyModule("pyautogui", _configure_pyautogui)
 pyperclip = LazyModule("pyperclip")
 
+from actions._desktop_safety import is_risky_desktop_key
 from core import confirm, outcome
 from core.undo import push_undo
 
@@ -890,6 +891,42 @@ def computer_settings(
             run=lambda f=func, a=action: (f(), f"{a} done.")[1],
         )
 
+    # These actions target whichever window currently has focus. Ask the
+    # person to inspect that window before submitting or closing anything.
+    if action in {"enter", "close_window", "close_tab"}:
+        titles = {
+            "enter": "Approve Enter in the active application",
+            "close_window": "Approve closing the active window",
+            "close_tab": "Approve closing the active tab",
+        }
+        details = {
+            "enter": (
+                "Key: Enter\n\nEnter may submit a form, send a message or "
+                "activate the focused control. Inspect the active window and "
+                "visible contents before approving."
+            ),
+            "close_window": (
+                "Shortcut: close the active window. Unsaved work may be lost, "
+                "and the current focus is not independently verified."
+            ),
+            "close_tab": (
+                "Shortcut: close the active tab. Unsaved work or an unsent form "
+                "may be lost, and the current focus is not independently verified."
+            ),
+        }
+        func = ACTION_MAP[action]
+        return confirm.request(
+            key=f"settings-{action}",
+            title=titles[action],
+            detail=details[action],
+            run=lambda f=func, a=action: (f(), outcome.unverified(
+                "computer_settings",
+                f"the approved {a.replace('_', ' ')} shortcut was executed; "
+                "the resulting application state was not independently verified",
+                action=a,
+            ))[1],
+        )
+
     if action == "volume_set":
         try:
             target = int(value if value is not None else 50)
@@ -916,7 +953,30 @@ def computer_settings(
             return outcome.failed("computer_settings",
                                   "no text was given to type", wanted=action)
         enter_after = str(params.get("press_enter", "false")).lower() in ("true", "1", "yes")
-        type_text(text, press_enter_after=enter_after)
+        if enter_after:
+            detail = (
+                f"Exact text to type:\n{text}\n\n"
+                "After typing this text, MINDER will press Enter in the active "
+                "application. This may submit a form or send a message."
+            )
+            if len(detail) > confirm.MAX_DETAIL_CHARS:
+                return outcome.failed(
+                    "computer_settings",
+                    "the text is too long to display in full for safe approval",
+                    wanted=action,
+                )
+            return confirm.request(
+                key="settings-type-enter",
+                title="Approve typing and submitting this text",
+                detail=detail,
+                run=lambda: (type_text(text, press_enter_after=True), outcome.unverified(
+                    "computer_settings",
+                    "the approved text was typed and Enter was pressed; "
+                    "the resulting submission was not independently verified",
+                    typed_chars=len(text),
+                ))[1],
+            )
+        type_text(text, press_enter_after=False)
         return outcome.done("computer_settings", wanted=action,
                             typed=text[:60])
 
@@ -925,6 +985,23 @@ def computer_settings(
         if not key:
             return outcome.failed("computer_settings",
                                   "no key was given to press", wanted=action)
+        if is_risky_desktop_key(key):
+            return confirm.request(
+                key="settings-press-key",
+                title=f"Approve key press: {key}",
+                detail=(
+                    f"Key: {key}\n\n"
+                    "Enter may submit a form or send a message. Delete may remove "
+                    "the currently selected item. Inspect the active application "
+                    "before approving."
+                ),
+                run=lambda: (press_key(key), outcome.unverified(
+                    "computer_settings",
+                    f"the approved {key} key press was executed; the resulting "
+                    "application state was not independently verified",
+                    key=key,
+                ))[1],
+            )
         press_key(key)
         return outcome.done("computer_settings", wanted=action, key=key)
 

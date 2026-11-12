@@ -96,6 +96,65 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
         operation.assert_not_called()
         self.assertIn("Anything unsaved will be lost", captured["detail"])
 
+    def test_enter_and_window_close_shortcuts_require_approval(self):
+        cases = (
+            ("enter", "Approve Enter in the active application"),
+            ("close_window", "Approve closing the active window"),
+            ("close_tab", "Approve closing the active tab"),
+        )
+        for action, title in cases:
+            with self.subTest(action=action):
+                captured = {}
+                operation = unittest.mock.Mock()
+                with (
+                    patch.object(settings, "ACTION_MAP",
+                                 {**settings.ACTION_MAP, action: operation}),
+                    patch.object(settings.confirm, "request",
+                                 side_effect=lambda **kwargs:
+                                 captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
+                ):
+                    result = settings.computer_settings({"action": action})
+                self.assertEqual(result, "[CONFIRMATION_PENDING]")
+                self.assertEqual(captured["title"], title)
+                operation.assert_not_called()
+                captured["run"]()
+                operation.assert_called_once_with()
+
+    def test_press_key_enter_requires_approval(self):
+        captured = {}
+        with (
+            patch.object(settings, "press_key") as press,
+            patch.object(settings.confirm, "request",
+                         side_effect=lambda **kwargs:
+                         captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
+        ):
+            result = settings.computer_settings({
+                "action": "press_key", "value": "Enter",
+            })
+        self.assertEqual(result, "[CONFIRMATION_PENDING]")
+        press.assert_not_called()
+        self.assertIn("Enter may submit", captured["detail"])
+        captured["run"]()
+        press.assert_called_once_with("Enter")
+
+    def test_type_and_enter_requires_approval_of_exact_text(self):
+        captured = {}
+        with (
+            patch.object(settings, "type_text") as type_text,
+            patch.object(settings.confirm, "request",
+                         side_effect=lambda **kwargs:
+                         captured.update(kwargs) or "[CONFIRMATION_PENDING]"),
+        ):
+            result = settings.computer_settings({
+                "action": "type_text", "value": "Send this to Alex",
+                "press_enter": True,
+            })
+        self.assertEqual(result, "[CONFIRMATION_PENDING]")
+        type_text.assert_not_called()
+        self.assertIn("Send this to Alex", captured["detail"])
+        captured["run"]()
+        type_text.assert_called_once_with("Send this to Alex", press_enter_after=True)
+
     def test_wifi_confirmation_explains_connection_risk(self) -> None:
         captured = {}
 

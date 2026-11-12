@@ -15,7 +15,14 @@ import time
 import random
 from pathlib import Path
 
-from actions._browser_safety import requires_human_approval
+from actions._browser_safety import (
+    requires_human_approval,
+    requires_screen_click_approval,
+)
+from actions._desktop_safety import (
+    is_risky_desktop_hotkey,
+    is_risky_desktop_key,
+)
 from core import appidentity, confirm, outcome
 from core.lazyimport import LazyModule, installed
 
@@ -457,6 +464,44 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
     )
 
 
+def _request_desktop_approval(title: str, detail: str, run) -> str:
+    """Ask the human before an opaque desktop action; fail closed without the HUD."""
+    if len(detail) > confirm.MAX_DETAIL_CHARS:
+        return outcome.failed(
+            "computer_control",
+            "the desktop action is too long to display in full for safe approval",
+        )
+    pending = confirm.pending_title()
+    if pending:
+        return outcome.ask(
+            "computer_control",
+            "There is already a confirmation waiting on screen. "
+            "The user must answer it before another desktop action can be approved.",
+            pending=pending,
+        )
+    return confirm.request(key="desktop-input", title=title, detail=detail, run=run)
+
+
+def _approved_desktop_action(title: str, detail: str, action_name: str,
+                             run, **metadata) -> str:
+    def perform():
+        try:
+            run()
+            return outcome.unverified(
+                "computer_control",
+                f"the approved {action_name} was executed, but the resulting "
+                "application state was not independently verified",
+                **metadata,
+            )
+        except Exception as exc:
+            return outcome.failed(
+                "computer_control",
+                f"the approved {action_name} failed: {exc}",
+                **metadata,
+            )
+    return _request_desktop_approval(title, detail, perform)
+
+
 def _perform_screen_click(description: str) -> str:
     """Find and click a screen target after any required human approval."""
     coords = _screen_find(description)
@@ -590,36 +635,94 @@ def computer_control(
             return _type(params.get("text", ""))
 
         if action == "smart_type":
-            return _smart_type(
-                params.get("text", ""),
-                clear_first=params.get("clear_first", True),
+            typed = str(params.get("text", ""))
+            clear_first = bool(params.get("clear_first", True))
+            if clear_first:
+                detail = (
+                    "Text to insert:\n" + typed
+                    + "\n\nThe currently focused field will be cleared first. "
+                    "Its existing contents are not captured for undo."
+                )
+                return _approved_desktop_action(
+                    "Approve replacing the focused field",
+                    detail, "field replacement",
+                    lambda: _smart_type(typed, clear_first=True),
+                    typed_chars=len(typed),
+                )
+            return _smart_type(typed, clear_first=False)
+
+        if action in ("click", "left_click", "double_click", "right_click"):
+            x, y = params.get("x"), params.get("y")
+            clicks = 2 if action == "double_click" else 1
+            button = "right" if action == "right_click" else "left"
+            location = f"({x}, {y})" if x is not None and y is not None else "the current pointer position"
+            detail = (
+                f"Action: {action.replace('_', ' ')}\n"
+                f"Location: {location}\n"
+                f"Mouse button: {button}\n"
+                f"Click count: {clicks}\n\n"
+                "The target cannot be identified reliably from raw coordinates. "
+                "Inspect the screen before approving this click."
             )
-
-        if action in ("click", "left_click"):
-            return _click(params.get("x"), params.get("y"), "left", 1)
-
-        if action == "double_click":
-            return _click(params.get("x"), params.get("y"), "left", 2)
-
-        if action == "right_click":
-            return _click(params.get("x"), params.get("y"), "right", 1)
+            return _approved_desktop_action(
+                f"Approve desktop click at {location}",
+                detail, "mouse click",
+                lambda: _click(x, y, button, clicks),
+                coordinates=location, button=button,
+            )
 
         if action == "move":
             return _move(int(params.get("x", 0)), int(params.get("y", 0)))
 
         if action == "drag":
-            return _drag(
-                int(params.get("x1", 0)), int(params.get("y1", 0)),
-                int(params.get("x2", 0)), int(params.get("y2", 0)),
+            x1, y1 = int(params.get("x1", 0)), int(params.get("y1", 0))
+            x2, y2 = int(params.get("x2", 0)), int(params.get("y2", 0))
+            detail = (
+                f"Drag from ({x1}, {y1}) to ({x2}, {y2}).\n"
+                "A drag can move files, drop items into folders or trigger other "
+                "screen actions. Inspect the screen before approving."
+            )
+            return _approved_desktop_action(
+                f"Approve desktop drag from ({x1}, {y1}) to ({x2}, {y2})",
+                detail, "mouse drag",
+                lambda: _drag(x1, y1, x2, y2),
+                start=f"{x1},{y1}", end=f"{x2},{y2}",
             )
 
         if action == "hotkey":
-            raw  = params.get("keys", "")
+            raw = params.get("keys", "")
             keys = [k.strip() for k in raw.split("+")] if isinstance(raw, str) else raw
+            if is_risky_desktop_hotkey(keys):
+                detail = (
+                    f"Shortcut: {' + '.join(keys)}\n\n"
+                    "This shortcut can close an application, submit a form, "
+                    "permanently delete a selected item, or open the Run dialog. "
+                    "Inspect the active window before approving."
+                )
+                return _approved_desktop_action(
+                    f"Approve keyboard shortcut: {' + '.join(keys)}",
+                    detail, "keyboard shortcut",
+                    lambda: _hotkey(*keys),
+                    shortcut="+".join(keys),
+                )
             return _hotkey(*keys)
 
         if action == "press":
-            return _press(params.get("key", "enter"))
+            key = str(params.get("key", "enter")).strip()
+            if is_risky_desktop_key(key):
+                detail = (
+                    f"Key: {key}\n\n"
+                    "Enter may submit a form or send a message. Delete may remove "
+                    "the currently selected item. Inspect the active application "
+                    "before approving."
+                )
+                return _approved_desktop_action(
+                    f"Approve key press: {key}",
+                    detail, "key press",
+                    lambda: _press(key),
+                    key=key,
+                )
+            return _press(key)
 
         if action == "scroll":
             return _scroll(
@@ -644,7 +747,7 @@ def computer_control(
             desc = str(params.get("description", "")).strip()
             if not desc:
                 return outcome.failed("computer_control", "no screen target was described")
-            if requires_human_approval(desc):
+            if requires_screen_click_approval(desc):
                 detail = (
                     f"Requested screen target: {desc}\n"
                     "MINDER will locate this target again after approval and click it. "
@@ -670,7 +773,15 @@ def computer_control(
             return f"Waited {secs}s"
 
         if action == "clear_field":
-            return _clear_field()
+            detail = (
+                "MINDER will select all text and delete it in the currently "
+                "focused field. The field's existing contents are not captured "
+                "for undo. Inspect the focused application before approving."
+            )
+            return _approved_desktop_action(
+                "Approve clearing the focused field",
+                detail, "field clear", _clear_field,
+            )
 
         if action == "focus_window":
             return _focus_window(params.get("title", ""))
@@ -714,6 +825,9 @@ TOOL = {
         "Always name the application in 'app_name'; there is no action that "
         "closes 'whatever is in front', because that is usually the assistant. "
         "To OPEN an application use the open_app tool instead. "
+        "Raw coordinate clicks, drags, field clearing/replacement, Enter/Delete "
+        "and risky shortcuts require human approval on the HUD; prefer semantic "
+        "screen targets for ordinary navigation. "
         "Read the status the tool returns: 'done' means it was confirmed, "
         "'unverified' means it was requested and could NOT be confirmed - say "
         "so rather than claiming success - and 'ask' means nothing was done "

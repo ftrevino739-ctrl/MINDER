@@ -225,6 +225,39 @@ class BrowserConfirmationTests(unittest.TestCase):
         page.keyboard.press.assert_awaited_once_with("Enter")
         request.assert_not_called()
 
+    def test_enter_in_contenteditable_chat_composer_requires_approval(self):
+        context = {
+            "hasForm": False, "isEditable": True, "formLabel": "Message",
+            "submitters": [],
+            "fields": ["Message: This should not send yet"],
+        }
+        page = FakePage(context)
+        captured = {}
+        session = make_session()
+        session._get_page = AsyncMock(return_value=page)
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session.press("Enter"))
+        self.assertEqual(result, "PENDING")
+        page.keyboard.press.assert_not_awaited()
+        self.assertIn("This should not send yet", captured["detail"])
+
+    def test_enter_in_searchbox_does_not_require_approval(self):
+        context = {
+            "hasForm": False, "isEditable": False, "formLabel": "Search",
+            "submitters": [], "fields": ["Search: weather"],
+        }
+        page = FakePage(context)
+        session = make_session()
+        session._get_page = AsyncMock(return_value=page)
+        with patch.object(browser_module.confirm, "request") as request:
+            result = asyncio.run(session.press("Enter"))
+        self.assertEqual(result, "Pressed: Enter")
+        page.keyboard.press.assert_awaited_once_with("Enter")
+        request.assert_not_called()
+
     def test_ordinary_navigation_click_does_not_prompt(self):
         locator = FakeLocator({"label": "Home", "formLabel": "", "fields": []})
         page = FakePage()
