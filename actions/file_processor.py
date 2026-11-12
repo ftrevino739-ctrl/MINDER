@@ -102,6 +102,110 @@ def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
             return candidate
     raise FileExistsError("Could not find an unused output filename.")
 
+
+def _write_new_text(path: Path, content: str) -> str:
+    """Create a derived text file exclusively and never truncate an existing output."""
+    path = Path(path)
+    try:
+        if path.exists() or path.is_symlink():
+            return outcome.failed(
+                "file_processor",
+                "the output path is already occupied; no existing file was overwritten",
+                path=str(path),
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+        return f"Saved to: {path}"
+    except FileExistsError:
+        return outcome.failed(
+            "file_processor",
+            "another file appeared at the output path; it was not overwritten",
+            path=str(path),
+        )
+    except Exception as exc:
+        return outcome.failed("file_processor", f"could not save new output: {exc}", path=str(path))
+
+
+def _pil_format_for_path(path: Path) -> str:
+    return {
+        ".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG",
+        ".webp": "WEBP", ".bmp": "BMP", ".tif": "TIFF",
+        ".tiff": "TIFF", ".gif": "GIF", ".ico": "ICO",
+    }.get(path.suffix.lower(), path.suffix.lstrip(".").upper())
+
+
+def _save_pil_image(image, path: Path, image_format: str | None = None, **kwargs) -> str:
+    """Save image data through exclusive creation to avoid output overwrites."""
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as handle:
+            image.save(handle, format=image_format or _pil_format_for_path(path), **kwargs)
+        return f"Saved to: {path}"
+    except FileExistsError:
+        return outcome.failed(
+            "file_processor",
+            "another file appeared at the output path; the existing file was not overwritten",
+            path=str(path),
+        )
+    except Exception as exc:
+        try:
+            if path.exists() and path.stat().st_size == 0:
+                path.unlink()
+        except Exception:
+            pass
+        return outcome.failed("file_processor", f"could not save image output: {exc}", path=str(path))
+
+
+def _run_ffmpeg(command: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run FFmpeg with overwrite disabled and require a successful exit code."""
+    if not command or Path(command[0]).name.lower() not in {"ffmpeg", "ffmpeg.exe"}:
+        raise ValueError("refusing to run an unexpected media command")
+    safe_command = list(command)
+    if "-y" in safe_command:
+        raise ValueError("FFmpeg overwrite mode (-y) is disabled")
+    if "-n" not in safe_command:
+        safe_command.insert(1, "-n")
+    result = subprocess.run(
+        safe_command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        shell=False,
+    )
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "unknown FFmpeg error").strip()
+        raise RuntimeError(f"FFmpeg exited with code {result.returncode}: {message[-1200:]}")
+    return result
+
+
+def _save_audio_export(audio, path: Path, fmt: str) -> str:
+    """Create an audio export exclusively."""
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as handle:
+            audio.export(handle, format=fmt)
+        return f"Saved to: {path}"
+    except FileExistsError:
+        return outcome.failed(
+            "file_processor",
+            "another file appeared at the output path; the existing file was not overwritten",
+            path=str(path),
+        )
+    except Exception as exc:
+        try:
+            if path.exists() and path.stat().st_size == 0:
+                path.unlink()
+        except Exception:
+            pass
+        return outcome.failed("file_processor", f"could not save audio output: {exc}", path=str(path))
+
+
+
 def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
     try:
         from PIL import Image
@@ -130,7 +234,9 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
 
             if len(result) > 500 and params.get("save", True):
                 out = _output_path(path, "result", ".txt")
-                out.write_text(result, encoding="utf-8")
+                saved = _write_new_text(out, result)
+                if not saved.startswith("Saved to:"):
+                    return saved
                 return f"{result[:300]}...\n\nFull result saved to: {out}"
             return result
         except Exception as e:
@@ -154,7 +260,9 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             else:
                 return "Please specify width, height, or scale."
             out = _output_path(path, f"resized_{new_size[0]}x{new_size[1]}")
-            img.resize(new_size, Image.LANCZOS).save(out)
+            saved = _save_pil_image(img.resize(new_size, Image.LANCZOS), out)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Resized from {w}x{h} to {new_size[0]}x{new_size[1]}. Saved: {out.name}"
         except Exception as e:
             return f"Resize failed: {e}"
@@ -167,7 +275,9 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
         try:
             img = Image.open(path).convert("RGB") if fmt == "jpg" else Image.open(path)
             out = _output_path(path, "converted", f".{fmt}")
-            img.save(out, pil_fmt)
+            saved = _save_pil_image(img, out, pil_fmt)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             return f"Convert failed: {e}"
@@ -177,7 +287,9 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
         try:
             img = Image.open(path).convert("RGB")
             out = _output_path(path, f"compressed_q{quality}", ".jpg")
-            img.save(out, "JPEG", quality=quality, optimize=True)
+            saved = _save_pil_image(img, out, "JPEG", quality=quality, optimize=True)
+            if not saved.startswith("Saved to:"):
+                return saved
             before = _file_size_str(path)
             after  = _file_size_str(out)
             return f"Compressed: {before} → {after}. Saved: {out.name}"
@@ -222,7 +334,9 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
 
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
-            out.write_text(text, encoding="utf-8")
+            saved = _write_new_text(out, text)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Text extracted ({len(text)} chars). Saved: {out.name}"
 
         prompt_map = {
@@ -237,7 +351,9 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
             result   = response.text.strip()
             if len(result) > 600 and params.get("save", True):
                 out = _output_path(path, action, ".txt")
-                out.write_text(result, encoding="utf-8")
+                saved = _write_new_text(out, result)
+                if not saved.startswith("Saved to:"):
+                    return saved
                 return f"{result[:400]}...\n\nFull result saved: {out.name}"
             return result
         except Exception as e:
@@ -264,7 +380,15 @@ def _process_pdf(path: Path, action: str, params: dict, speak=None) -> str:
                 if para.strip():
                     doc.add_paragraph(para.strip())
             out = _output_path(path, "converted", ".docx")
-            doc.save(out)
+            try:
+                with out.open("xb") as handle:
+                    doc.save(handle)
+            except FileExistsError:
+                return outcome.failed(
+                    "file_processor",
+                    "another file appeared at the output path; the existing file was not overwritten",
+                    path=str(out),
+                )
             return f"Converted to Word document. Saved: {out.name}"
         except ImportError:
             return "python-docx not installed. Run: pip install python-docx"
@@ -301,7 +425,9 @@ def _process_text_doc(path: Path, file_type: str, action: str,
     if action == "extract_text":
         if file_type != "txt":
             out = _output_path(path, "extracted", ".txt")
-            out.write_text(content, encoding="utf-8")
+            saved = _write_new_text(out, content)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Text extracted. Saved: {out.name}"
         return content[:2000]
 
@@ -327,7 +453,9 @@ def _process_text_doc(path: Path, file_type: str, action: str,
         result   = response.text.strip()
         if len(result) > 600 and params.get("save", True):
             out = _output_path(path, action, ".txt")
-            out.write_text(result, encoding="utf-8")
+            saved = _write_new_text(out, result)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"{result[:400]}...\n\nFull result saved: {out.name}"
         return result
     except Exception as e:
@@ -445,7 +573,9 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
 
     if action == "format":
         out = _output_path(path, "formatted", ".json")
-        out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        saved = _write_new_text(out, json.dumps(data, indent=2, ensure_ascii=False))
+        if not saved.startswith("Saved to:"):
+            return saved
         return f"Formatted JSON saved: {out.name}"
 
     if action in ("analyze", "summarize", "extract"):
@@ -466,7 +596,8 @@ def _process_json(path: Path, action: str, params: dict, speak=None) -> str:
             if isinstance(data, list):
                 df  = pd.DataFrame(data)
                 out = _output_path(path, "converted", ".csv")
-                df.to_csv(out, index=False)
+                with out.open("x", encoding="utf-8", newline="") as handle:
+                    df.to_csv(handle, index=False)
                 return f"Converted to CSV. Saved: {out.name}"
             return "JSON must be an array of objects to convert to CSV."
         except ImportError:
@@ -595,7 +726,9 @@ def _process_code(path: Path, action: str, params: dict, speak=None) -> str:
             out = _output_path(path, action)
             code_match = re.search(r"```(?:\w+)?\n(.*?)```", result, re.DOTALL)
             code_to_save = code_match.group(1) if code_match else result
-            out.write_text(code_to_save, encoding="utf-8")
+            saved = _write_new_text(out, code_to_save)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"{result[:400]}...\n\nSaved: {out.name}"
         return result
     except Exception as e:
@@ -635,7 +768,9 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             result = response.text.strip()
             if params.get("save", True):
                 out = _output_path(path, "transcript", ".txt")
-                out.write_text(result, encoding="utf-8")
+                saved = _write_new_text(out, result)
+                if not saved.startswith("Saved to:"):
+                    return saved
                 return f"Transcription saved: {out.name}\n\nPreview: {result[:300]}"
             return result
         except Exception as e:
@@ -647,7 +782,9 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             from pydub import AudioSegment
             audio = AudioSegment.from_file(path)
             out   = _output_path(path, "converted", f".{fmt}")
-            audio.export(out, format=fmt)
+            saved = _save_audio_export(audio, out, fmt)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except ImportError:
             return "pydub not installed. Run: pip install pydub"
@@ -663,7 +800,9 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             end_ms  = int(end * 1000)   if end   else len(audio)
             trimmed = audio[int(start * 1000):end_ms]
             out     = _output_path(path, f"trim_{int(start)}s_{int(end)}s")
-            trimmed.export(out, format=path.suffix.lstrip("."))
+            saved = _save_audio_export(trimmed, out, path.suffix.lstrip("."))
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Trimmed audio ({int(start)}s–{int(end)}s). Saved: {out.name}"
         except ImportError:
             return "pydub not installed."
@@ -672,14 +811,41 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
 
     return f"Unknown audio action: '{action}'. Try: transcribe, info, convert, trim"
 
+def _run_ffmpeg(command: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run FFmpeg with overwrite disabled and require a successful exit code."""
+    if not command or Path(command[0]).name.lower() not in {"ffmpeg", "ffmpeg.exe"}:
+        raise ValueError("refusing to run an unexpected media command")
+    safe_command = list(command)
+    if "-y" in safe_command:
+        raise ValueError("FFmpeg overwrite mode (-y) is disabled")
+    if "-n" not in safe_command:
+        safe_command.insert(1, "-n")
+    result = subprocess.run(
+        safe_command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        shell=False,
+    )
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "unknown FFmpeg error").strip()
+        raise RuntimeError(f"FFmpeg exited with code {result.returncode}: {message[-1200:]}")
+    return result
+
+
 def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     action = action or "info"
 
 
     def _ffmpeg_available() -> bool:
         try:
-            subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=3)
-            return True
+            result = subprocess.run(
+                ["ffmpeg", "-version"], capture_output=True,
+                timeout=3, shell=False,
+            )
+            return result.returncode == 0
         except Exception:
             return False
 
@@ -709,10 +875,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found. Install ffmpeg to extract audio."
         out = _output_path(path, "audio", ".mp3")
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(out), "-y"],
-                capture_output=True, timeout=300
-            )
+            _run_ffmpeg(["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(out)], 300)
             return f"Audio extracted. Saved: {out.name}"
         except Exception as e:
             return f"Extract audio failed: {e}"
@@ -728,7 +891,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             if end:
                 cmd += ["-to", str(end)]
             cmd += ["-c", "copy", str(out), "-y"]
-            subprocess.run(cmd, capture_output=True, timeout=600)
+            _run_ffmpeg(cmd[:-1] if cmd and cmd[-1] == "-y" else cmd, 600)
             return f"Trimmed video saved: {out.name}"
         except Exception as e:
             return f"Trim failed: {e}"
@@ -739,10 +902,9 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found."
         out = _output_path(path, f"frame_{timestamp.replace(':', '')}", ".jpg")
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path), "-ss", timestamp,
-                 "-vframes", "1", str(out), "-y"],
-                capture_output=True, timeout=30
+            _run_ffmpeg(
+                ["ffmpeg", "-i", str(path), "-ss", timestamp, "-vframes", "1", str(out)],
+                30,
             )
             return f"Frame extracted at {timestamp}. Saved: {out.name}"
         except Exception as e:
@@ -754,12 +916,10 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found."
         out = _output_path(path, f"compressed_crf{crf}", ".mp4")
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path),
-                 "-c:v", "libx264", "-crf", str(crf),
-                 "-preset", "medium", "-c:a", "copy",
-                 str(out), "-y"],
-                capture_output=True, timeout=1800
+            _run_ffmpeg(
+                ["ffmpeg", "-i", str(path), "-c:v", "libx264",
+                 "-crf", str(crf), "-preset", "medium", "-c:a", "copy", str(out)],
+                1800,
             )
             before = _file_size_str(path)
             after  = _file_size_str(out)
@@ -770,20 +930,16 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
     if action == "transcribe":
         if not _ffmpeg_available():
             return "ffmpeg not found. Needed for video transcription."
-        tmp_audio = Path(tempfile.mktemp(suffix=".mp3"))
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a",
-                 str(tmp_audio), "-y"],
-                capture_output=True, timeout=300
-            )
-            result = _process_audio(tmp_audio, "transcribe", params, speak)
-            return result
+            with tempfile.TemporaryDirectory(prefix="minder-transcribe-") as temp_dir:
+                tmp_audio = Path(temp_dir) / "audio.mp3"
+                _run_ffmpeg(
+                    ["ffmpeg", "-i", str(path), "-q:a", "0", "-map", "a", str(tmp_audio)],
+                    300,
+                )
+                return _process_audio(tmp_audio, "transcribe", params, speak)
         except Exception as e:
             return f"Video transcription failed: {e}"
-        finally:
-            if tmp_audio.exists():
-                tmp_audio.unlink()
 
     if action == "convert":
         fmt = params.get("format", "mp4").lstrip(".")
@@ -791,10 +947,7 @@ def _process_video(path: Path, action: str, params: dict, speak=None) -> str:
             return "ffmpeg not found."
         out = _output_path(path, "converted", f".{fmt}")
         try:
-            subprocess.run(
-                ["ffmpeg", "-i", str(path), str(out), "-y"],
-                capture_output=True, timeout=1800
-            )
+            _run_ffmpeg(["ffmpeg", "-i", str(path), str(out)], 1800)
             return f"Converted to {fmt.upper()}. Saved: {out.name}"
         except Exception as e:
             return f"Convert failed: {e}"
@@ -1119,7 +1272,9 @@ def _process_pptx(path: Path, action: str, params: dict, speak=None) -> str:
         text = _read_pptx_text()
         if action == "extract_text":
             out = _output_path(path, "text", ".txt")
-            out.write_text(text, encoding="utf-8")
+            saved = _write_new_text(out, text)
+            if not saved.startswith("Saved to:"):
+                return saved
             return f"Text extracted. Saved: {out.name}"
         try:
             model    = _gemini_client()
