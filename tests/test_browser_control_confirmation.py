@@ -44,7 +44,12 @@ class FakePage:
         self.url = "https://mail.example.test/compose"
         self._context = context or {"formLabel": "", "submitters": [], "fields": []}
         self.keyboard = FakeKeyboard()
-        self.evaluate = AsyncMock(side_effect=lambda _script: dict(self._context))
+        async def evaluate(script):
+            if "document.querySelectorAll" in script:
+                return []
+            return dict(self._context)
+
+        self.evaluate = AsyncMock(side_effect=evaluate)
 
     def is_closed(self):
         return False

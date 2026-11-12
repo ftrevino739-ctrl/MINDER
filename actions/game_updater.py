@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 
 from config import get_os, is_windows, is_mac, is_linux
+from core import confirm, outcome
 
 _CNW: dict = (
     {"creationflags": subprocess.CREATE_NO_WINDOW}
@@ -182,271 +183,8 @@ def _is_steam_running() -> bool:
     except Exception:
         return False
 
-def _get_steam_window_rect() -> tuple[int, int, int, int] | None:
-    try:
-        import pygetwindow as gw
-        for w in gw.getAllWindows():
-            if "steam" in w.title.lower() and w.width > 200 and w.visible:
-                return w.left, w.top, w.width, w.height
-    except Exception:
-        pass
-    return None
-
-
-def _click_first_profile_by_screenshot() -> bool:
-
-    try:
-        import pyautogui
-        import numpy as np
-
-        time.sleep(1.5)
-        win = _get_steam_window_rect()
-        if not win:
-            print("[GameUpdater] ⚠️ Steam window not found")
-            return False
-
-        wx, wy, ww, wh = win
-        screenshot = pyautogui.screenshot(region=(wx, wy, ww, wh))
-        img        = np.array(screenshot)
-        h, w       = img.shape[:2]
-
-        search_y1, search_y2 = h // 3,  h * 3 // 4
-        search_x1, search_x2 = w // 5,  w * 4 // 5
-        region = img[search_y1:search_y2, search_x1:search_x2]
-
-        r, g, b = region[:,:,0].astype(int), region[:,:,1].astype(int), region[:,:,2].astype(int)
-        max_c   = np.maximum(np.maximum(r, g), b)
-        min_c   = np.minimum(np.minimum(r, g), b)
-        colorful = (max_c > 60) & ((max_c - min_c) > 40)
-
-        if not colorful.any():
-            print("[GameUpdater] ⚠️ Avatar colour not found — clicking by guess")
-            pyautogui.click(wx + ww // 2 - ww // 6, wy + wh // 2)
-            return True
-
-        cols = np.where(colorful.any(axis=0))[0]
-        rows = np.where(colorful.any(axis=1))[0]
-        if not len(cols) or not len(rows):
-            return False
-
-        avatar_w   = min(90, region.shape[1] // 4)
-        first_col  = int(cols[0])
-        block_cols = cols[cols < first_col + avatar_w]
-
-        abs_x = wx + search_x1 + int(block_cols.mean())
-        abs_y = wy + search_y1 + int(rows.mean())
-        print(f"[GameUpdater] 🎯 Profile avatar ({abs_x}, {abs_y}) — clicking")
-        pyautogui.click(abs_x, abs_y)
-        return True
-
-    except ImportError as e:
-        print(f"[GameUpdater] ⚠️ Missing library: {e}")
-        return False
-    except Exception as e:
-        print(f"[GameUpdater] ⚠️ Profile detection failed: {e}")
-        return False
-
-
-def _handle_steam_profile_selection() -> bool:
-    print("[GameUpdater] 🔍 Checking profile-selection dialog...")
-    win = _get_steam_window_rect()
-    if not win:
-        return False
-
-    wx, wy, ww, wh = win
-    try:
-        import pyautogui, numpy as np
-        screenshot   = pyautogui.screenshot(region=(wx, wy, ww, wh))
-        img          = np.array(screenshot)
-        is_small     = ww < 900 and wh < 700
-        top_region   = img[:wh // 3, :, :]
-        white_pixels = int(np.sum(
-            (top_region[:,:,0] > 200) &
-            (top_region[:,:,1] > 200) &
-            (top_region[:,:,2] > 200)
-        ))
-        if not is_small and white_pixels <= 100:
-            print("[GameUpdater] ℹ️ No profile dialog — Steam is already logged in")
-            return False
-    except ImportError:
-        pass
-    except Exception:
-        pass
-
-    print("[GameUpdater] 👤 Profile selection detected — clicking the first profile")
-    return _click_first_profile_by_screenshot()
-
-def _find_best_drive() -> dict | None:
-    import shutil, string
-    drives = []
-    for letter in string.ascii_uppercase:
-        drive_path = f"{letter}:\\"
-        if os.path.exists(drive_path):
-            try:
-                free_gb = shutil.disk_usage(drive_path).free / (1024 ** 3)
-                if free_gb > 0:
-                    drives.append({"letter": letter, "path": drive_path, "free_gb": free_gb})
-            except Exception:
-                continue
-    return max(drives, key=lambda d: d["free_gb"]) if drives else None
-
-
-def _select_drive_in_dialog(dialog, drive_letter: str) -> bool:
-    target = drive_letter.upper()
-    for control_type in ("ListItem", "RadioButton"):
-        try:
-            for ctrl in dialog.descendants(control_type=control_type):
-                if target in ctrl.window_text().upper():
-                    ctrl.click_input()
-                    print(f"[GameUpdater] ✅ Drive selected ({control_type}): {ctrl.window_text()}")
-                    return True
-        except Exception:
-            continue
-    try:
-        for combo in dialog.descendants(control_type="ComboBox"):
-            try:
-                combo.expand()
-                time.sleep(0.15)
-                for idx, txt in enumerate(combo.texts()):
-                    if target in txt.upper():
-                        combo.select(idx)
-                        return True
-                combo.collapse()
-            except Exception:
-                continue
-    except Exception:
-        pass
-    try:
-        for ctrl in dialog.descendants():
-            txt = ctrl.window_text().upper()
-            if f"{target}:" in txt and len(txt) < 80:
-                ctrl.click_input()
-                return True
-    except Exception:
-        pass
-    return False
-
-
-def _click_button(window, keywords: list[str]) -> bool:
-    try:
-        for btn in window.descendants(control_type="Button"):
-            try:
-                txt = btn.window_text().lower().strip()
-                if txt in keywords or any(kw in txt for kw in keywords):
-                    btn.click_input()
-                    return True
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return False
-
-
-def _handle_install_dialog_pyautogui(game_name: str, best_drive: dict) -> str:
-    try:
-        import pyautogui
-        import pygetwindow as gw
-    except ImportError:
-        return (f"Install dialog opened for '{game_name}'. "
-                f"Please select '{best_drive['letter']}:' and click Install manually.")
-
-    pyautogui.FAILSAFE = False
-    drive_label = f"{best_drive['letter']}:"
-    install_win = None
-
-    for _ in range(30):
-        time.sleep(0.5)
-        for w in gw.getAllWindows():
-            if ("install" in w.title.lower() or "steam" in w.title.lower()) \
-                    and w.width > 300 and w.visible:
-                install_win = w
-                break
-        if install_win:
-            break
-
-    if not install_win:
-        return f"Please select '{drive_label}' and click Install in Steam for '{game_name}'."
-
-    try:
-        install_win.activate()
-        time.sleep(0.4)
-    except Exception:
-        pass
-
-    wx, wy = install_win.left, install_win.top
-    ww, wh = install_win.width, install_win.height
-    pyautogui.click(wx + int(ww * 0.35), wy + int(wh * 0.45))
-    time.sleep(0.2)
-    pyautogui.typewrite(best_drive["letter"], interval=0.05)
-    time.sleep(0.2)
-    pyautogui.click(wx + int(ww * 0.72), wy + int(wh * 0.88))
-    return f"Attempted drive {drive_label} selection and Install click for '{game_name}'."
-
-
-def _handle_install_dialog(game_name: str) -> str:
-    best_drive = _find_best_drive()
-    if not best_drive:
-        return f"Install dialog opened for '{game_name}'. Could not detect drives."
-
-    drive_letter = best_drive["letter"]
-    drive_label  = f"{drive_letter}:"
-    print(f"[GameUpdater] 🏆 Target drive: {drive_label} ({best_drive['free_gb']:.1f} GB free)")
-
-    try:
-        from pywinauto import Application, findwindows
-        dialog = None
-
-        # NOTE: this drives Steam's native installer dialog by matching its
-        # on-screen button/title text, which is localized. We match English and
-        # Turkish labels (install/yükle, next/ileri, ok/tamam). On a Steam client
-        # set to another language the match simply fails and the automation
-        # reports it — it never crashes, and manual install still works.
-        for _ in range(40):
-            time.sleep(0.5)
-            try:
-                for hwnd in findwindows.find_windows(
-                    title_re=r"(?i)(install|yükle|steam)", visible_only=True
-                ):
-                    try:
-                        app  = Application(backend="uia").connect(handle=hwnd)
-                        win  = app.window(handle=hwnd)
-                        rect = win.rectangle()
-                        if win.is_visible() and rect.width() > 300 and rect.height() > 200:
-                            all_text = " ".join(
-                                c.window_text() for c in win.descendants()
-                                if c.window_text()
-                            ).upper()
-                            if any(x in all_text for x in
-                                   ("C:", "D:", "E:", "F:", "INSTALL", "YÜKLE")):
-                                dialog = win
-                                break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            if dialog:
-                break
-
-        if not dialog:
-            raise RuntimeError("Dialog not found")
-
-        dialog.set_focus()
-        time.sleep(0.4)
-        drive_selected  = _select_drive_in_dialog(dialog, drive_letter)
-        install_clicked = _click_button(
-            dialog, ["install", "yükle", "next", "ileri", "ok", "tamam"]
-        )
-
-        if install_clicked:
-            suffix = f"Selected {drive_label} and" if drive_selected else "Default drive used, but"
-            return f"{suffix} clicked Install for '{game_name}'."
-        return f"Please click Install manually in Steam for '{game_name}'."
-
-    except ImportError:
-        return _handle_install_dialog_pyautogui(game_name, best_drive)
-    except Exception as e:
-        print(f"[GameUpdater] ⚠️ pywinauto failed: {e}")
-        return _handle_install_dialog_pyautogui(game_name, best_drive)
+# Steam profile and installation dialogs are intentionally left to the human.
+# MINDER must not select an account, pick a drive, or click Install on its own.
 
 def _ensure_steam_running(steam_path: Path) -> bool:
     if _is_steam_running():
@@ -468,9 +206,6 @@ def _ensure_steam_running(steam_path: Path) -> bool:
         if _is_steam_running():
             print("[GameUpdater] ✅ Steam is running")
             time.sleep(4)
-            if is_windows():
-                _handle_steam_profile_selection()
-                time.sleep(2)
             return True
 
     print("[GameUpdater] ⚠️ Could not start Steam")
@@ -606,13 +341,10 @@ def _install_steam_game(steam_path: Path, game_name: str = None,
     try:
         _launch_steam_url(exe, f"steam://install/{app_id}")
 
-        if is_windows():
-            threading.Thread(
-                target=_handle_install_dialog,
-                args=(game_name or str(app_id),),
-                daemon=True
-            ).start()
-        return f"Install started for '{game_name}'. Steam will open the download dialog."
+        return (
+            f"Steam opened the install dialog for '{game_name or app_id}'. "
+            "Choose the library/drive and click Install yourself in Steam."
+        )
     except Exception as e:
         return f"Install failed: {e}"
 
@@ -934,7 +666,7 @@ def _get_schedule_status() -> str:
         return "No scheduled game update found."
 
 
-def game_updater(parameters: dict, player=None, speak=None) -> str:
+def _game_updater_execute(parameters: dict, player=None, speak=None) -> str:
     p         = parameters or {}
     action    = p.get("action",    "update").lower().strip()
     platform  = p.get("platform",  "both").lower().strip()
@@ -942,7 +674,17 @@ def game_updater(parameters: dict, player=None, speak=None) -> str:
     app_id    = (p.get("app_id")    or "").strip() or None
     hour      = int(p.get("hour",   3))
     minute    = int(p.get("minute", 0))
-    shutdown  = str(p.get("shutdown_when_done", "false")).lower() == "true"
+    shutdown_value = p.get("shutdown_when_done", False)
+    shutdown = shutdown_value is True or str(shutdown_value).lower() in ("true", "1", "yes")
+    if platform not in {"steam", "epic", "both"}:
+        return outcome.failed("game_updater", "unsupported platform; choose steam, epic, or both")
+    if app_id and (not app_id.isdigit() or len(app_id) > 12):
+        return outcome.failed("game_updater", "Steam AppID must contain 1 to 12 digits")
+    if action in {"schedule", "cancel_schedule", "schedule_status"}:
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            return outcome.failed("game_updater", "schedule time must be between 00:00 and 23:59")
+    if shutdown and action not in {"install", "update"}:
+        return outcome.failed("game_updater", "shutdown_when_done is only valid for install/update")
 
     results = []
 
@@ -1052,10 +794,99 @@ def game_updater(parameters: dict, player=None, speak=None) -> str:
     return f"Unknown action: '{action}'."
 
 
+def game_updater(parameters: dict, player=None, speak=None) -> str:
+    """Route downloads, updates and scheduler mutations through a human approval gate."""
+    params = dict(parameters or {})
+    action = str(params.get("action", "update")).lower().strip()
+    platform = str(params.get("platform", "both")).lower().strip()
+    game_name = str(params.get("game_name") or "").strip()
+    app_id = str(params.get("app_id") or "").strip()
+    shutdown_value = params.get("shutdown_when_done", False)
+    shutdown = shutdown_value is True or str(shutdown_value).lower() in ("true", "1", "yes")
+
+    if platform not in {"steam", "epic", "both"}:
+        return outcome.failed("game_updater", "unsupported platform; choose steam, epic, or both")
+    if app_id and (not app_id.isdigit() or len(app_id) > 12):
+        return outcome.failed("game_updater", "Steam AppID must contain 1 to 12 digits")
+    if action in {"schedule", "cancel_schedule", "schedule_status"}:
+        try:
+            hour = int(params.get("hour", 3))
+            minute = int(params.get("minute", 0))
+        except (TypeError, ValueError):
+            return outcome.failed("game_updater", "schedule hour and minute must be integers")
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            return outcome.failed("game_updater", "schedule time must be between 00:00 and 23:59")
+        params["hour"], params["minute"] = hour, minute
+
+    if action not in {"install", "update", "schedule", "cancel_schedule"}:
+        return _game_updater_execute(params, player=player, speak=speak)
+
+    if confirm.pending_title():
+        return outcome.ask(
+            "game_updater",
+            "There is already a confirmation waiting on screen. Answer it before "
+            "requesting another game installation, update, or schedule change.",
+            action=action,
+            platform=platform,
+        )
+
+    if action == "install":
+        target = game_name or (f"Steam AppID {app_id}" if app_id else "(missing game)")
+        title = f"Approve game installation: {target}"
+        operation = (
+            "Open the installation flow. MINDER will not choose an account, library, "
+            "drive, or click Install automatically."
+        )
+    elif action == "update":
+        target = game_name or "all installed games"
+        title = f"Approve game update: {target}"
+        operation = "Check for and start available game updates/downloads."
+    elif action == "schedule":
+        target = f"daily updates at {params['hour']:02d}:{params['minute']:02d}"
+        title = "Approve daily game-update schedule"
+        operation = (
+            "Create or replace the daily operating-system task. Future scheduled "
+            "runs will start game updates without asking again."
+        )
+    else:
+        target = "the existing daily game-update task"
+        title = "Approve cancelling scheduled game updates"
+        operation = "Remove the configured daily game-update task."
+
+    detail = (
+        f"Operation: {action}\n"
+        f"Platform: {platform}\n"
+        f"Target: {target}\n"
+        f"Details: {operation}"
+    )
+    if action in {"install", "update"} and app_id:
+        detail += f"\nSteam AppID: {app_id}"
+    if action in {"install", "update"} and shutdown:
+        detail += (
+            "\n\nAUTOMATIC SHUTDOWN: After Steam downloads finish, MINDER will "
+            "shut down this computer. Save your work before approving."
+        )
+    else:
+        detail += "\n\nMINDER will not shut down the computer."
+    if len(detail) > confirm.MAX_DETAIL_CHARS:
+        return outcome.failed(
+            "game_updater",
+            "the full game operation could not be displayed for approval",
+            action=action,
+        )
+
+    return confirm.request(
+        key="game-updater",
+        title=title,
+        detail=detail,
+        run=lambda: _game_updater_execute(params, player=player, speak=speak),
+    )
+
+
 if __name__ == "__main__":
     if "--scheduled" in sys.argv:
         print(f"[GameUpdater] 🕐 Scheduled run at {datetime.now().strftime('%H:%M')}")
-        result = game_updater({"action": "update", "platform": "both"})
+        result = _game_updater_execute({"action": "update", "platform": "both"})
         print(f"[GameUpdater] ✅ {result}")
 
 
