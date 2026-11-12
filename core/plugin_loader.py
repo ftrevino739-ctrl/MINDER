@@ -342,6 +342,11 @@ def _inspect_plugin_file(path: Path) -> PluginRecord:
         parameters = plugin_meta.get("parameters", dict(_DEFAULT_PARAMS))
         if not isinstance(parameters, dict) or parameters.get("type") != "OBJECT":
             raise ValueError("PLUGIN['parameters'] must be an OBJECT schema.")
+        if not any(
+            isinstance(node, ast.FunctionDef) and node.name == "run"
+            for node in tree.body
+        ):
+            raise ValueError("A top-level synchronous run(parameters, ...) function is required.")
 
         settings = None
         try:
@@ -394,7 +399,14 @@ def discover_plugins(plugins_dir: Path, core_tool_names: set[str],
         if path.name.startswith("_"):
             continue
 
-        rec = _inspect_plugin_file(path)
+        if path.is_symlink() or path.resolve().parent != plugins_dir.resolve():
+            rec = PluginRecord(
+                name=path.stem,
+                file=path.name,
+                error="Plugin source must be a regular file directly inside the plugins folder.",
+            )
+        else:
+            rec = _inspect_plugin_file(path)
         if rec.valid and rec.name in core_tool_names:
             rec = PluginRecord(
                 name=rec.name, file=path.name,

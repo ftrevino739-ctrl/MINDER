@@ -148,6 +148,36 @@ class PluginLoaderSecurityTests(unittest.TestCase):
             config_manager.save_plugin_enabled("sample_plugin", False, digest)
             self.assertFalse(config_manager.get_plugin_enabled("sample_plugin", digest))
 
+    def test_plugin_without_top_level_run_is_rejected_without_import(self):
+        path = self.plugins_dir / "missing_run.py"
+        path.write_text(
+            "from pathlib import Path\\n"
+            + "Path(" + repr(str(self.marker)) + ").write_text('executed')\\n"
+            + "PLUGIN = {'name': 'missing_run', 'description': 'No run', "
+              "'parameters': {'type': 'OBJECT', 'properties': {}}}\\n",
+            encoding="utf-8",
+        )
+        registry = plugin_loader.discover_plugins(
+            self.plugins_dir, set(), logger=lambda _message: None,
+        )
+        self.assertFalse(self.marker.exists())
+        self.assertFalse(registry.has("missing_run"))
+        self.assertFalse(registry.list_for_ui()[0]["valid"])
+
+    def test_symlinked_plugin_source_is_rejected(self):
+        source = self._write_plugin(filename="outside.py", name="outside_plugin")
+        link = self.plugins_dir / "linked.py"
+        try:
+            link.symlink_to(source)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are unavailable in this environment")
+        registry = plugin_loader.discover_plugins(
+            self.plugins_dir, set(), logger=lambda _message: None,
+        )
+        linked = next(item for item in registry.list_for_ui() if item["file"] == "linked.py")
+        self.assertFalse(linked["valid"])
+        self.assertFalse(self.marker.exists())
+
     def test_colliding_core_tool_name_is_rejected_without_import(self):
         self._write_plugin(name="open_app")
         with patch.object(plugin_loader, "get_plugin_enabled", return_value=True):
