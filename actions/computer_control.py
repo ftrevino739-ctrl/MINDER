@@ -537,9 +537,6 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         return None
 
     try:
-        from google import genai
-        from google.genai import types as gtypes
-
         _require_pyautogui()
         w, h  = pyautogui.size()
         img   = pyautogui.screenshot()
@@ -556,7 +553,7 @@ def _screen_find(description: str) -> tuple[int, int] | None:
 
         from core import gemini
         response = gemini.call(
-            [gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"), prompt],
+            [{"inline_data": {"data": image_bytes, "mime_type": "image/png"}}, prompt],
             tier=gemini.FAST, timeout_ms=20_000,
         )
         if response is None:

@@ -85,23 +85,8 @@ class ComputerControlSafetyTests(unittest.TestCase):
         scroll.assert_called_once()
 
     def test_screen_find_uses_pipeline_without_a_gemini_key(self):
-        import sys
-        from types import ModuleType, SimpleNamespace
-
-        google_module = ModuleType("google")
-        google_module.__path__ = []
-        genai_module = ModuleType("google.genai")
-        types_module = ModuleType("google.genai.types")
-
-        class Part:
-            @staticmethod
-            def from_bytes(data, mime_type):
-                return {"data": data, "mime_type": mime_type}
-
-        types_module.Part = Part
-        google_module.genai = genai_module
-        genai_module.types = types_module
-        genai_module.__path__ = []
+        from types import SimpleNamespace
+        from memory import config_manager
 
         class FakeImage:
             def save(self, buffer, format):
@@ -111,25 +96,21 @@ class ComputerControlSafetyTests(unittest.TestCase):
             size=lambda: (800, 600),
             screenshot=lambda: FakeImage(),
         )
-        from memory import config_manager
-
         with (
             patch.object(config_manager, "get_provider_mode", return_value="pipeline"),
             patch.object(computer, "_get_api_key") as get_key,
             patch.object(computer, "_require_pyautogui"),
             patch.object(computer, "pyautogui", ui),
             patch("core.gemini.call", return_value=SimpleNamespace(text="25,30")) as call,
-            patch.dict(sys.modules, {
-                "google": google_module,
-                "google.genai": genai_module,
-                "google.genai.types": types_module,
-            }),
         ):
             result = computer._screen_find("Save")
 
         self.assertEqual(result, (25, 30))
         get_key.assert_not_called()
         call.assert_called_once()
+        image_part = call.call_args.args[0][0]
+        self.assertEqual(image_part["inline_data"]["mime_type"], "image/png")
+        self.assertEqual(image_part["inline_data"]["data"], b"screen")
 
     def test_screen_find_in_gemini_mode_still_requires_a_gemini_key(self):
         from memory import config_manager
