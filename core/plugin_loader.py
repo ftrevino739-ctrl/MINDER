@@ -8,6 +8,8 @@ toggling a plugin does not require restarting the app or re-importing anything.
 """
 from __future__ import annotations
 
+import ast
+import hashlib
 import importlib.util
 import inspect
 import re
@@ -69,6 +71,7 @@ class PluginRecord:
     #          is in force. Nothing is deleted: Gemini still gets the full text.
     tier: Optional[str] = None
     brief: Optional[str] = None
+    source_sha256: str = ""
 
 
 class PluginRegistry:
@@ -82,6 +85,7 @@ class PluginRegistry:
         # the user has to know about are sent to it. Defaults to dropping them,
         # which keeps every existing single-sink caller working unchanged.
         self._notify = notify or (lambda _msg: None)
+        self._plugins_dir = Path("plugins")
 
     # -- called by main.py at LiveConnectConfig build time --
     def get_tool_declarations(self) -> list[dict]:
@@ -120,39 +124,58 @@ class PluginRegistry:
             return f"Plugin '{name}' is not available."
         if not get_plugin_enabled(name):
             return f"The '{name}' plugin is currently disabled."
+
+        # A plugin's Python module is imported only after the user has explicitly
+        # enabled it and the source still matches the bytes inspected at startup.
+        if rec.run is None:
+            path = self._plugins_dir / rec.file
+            module_name = f"plugins.{path.stem}"
+            try:
+                source = path.read_bytes()
+                if hashlib.sha256(source).hexdigest() != rec.source_sha256:
+                    return (
+                        f"Plugin '{name}' changed after discovery. Restart MINDER "
+                        "to review the new file before enabling it."
+                    )
+                spec = importlib.util.spec_from_file_location(module_name, path)
+                if spec is None or spec.loader is None:
+                    raise ImportError("could not build import spec")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                try:
+                    spec.loader.exec_module(module)
+                except Exception:
+                    sys.modules.pop(module_name, None)
+                    raise
+
+                loaded = _validate(module, rec.file)
+                if (
+                    not loaded.valid
+                    or loaded.name != rec.name
+                    or loaded.description != rec.description
+                    or loaded.parameters != rec.parameters
+                ):
+                    sys.modules.pop(module_name, None)
+                    return (
+                        f"Plugin '{name}' runtime metadata did not match the "
+                        "metadata reviewed at startup. Nothing was run."
+                    )
+                rec.run = loaded.run
+                rec.settings = loaded.settings
+            except Exception as e:
+                sys.modules.pop(module_name, None)
+                message = _load_error(path, self._plugins_dir, e)
+                self._logger(f"Plugin '{name}' failed to load: {message}")
+                self._notify(f"Plugin '{name}' failed to load — see the console.")
+                return f"Plugin '{name}' could not be loaded: {message}"
+
         try:
             return _call_run(rec.run, parameters, player, session_memory) or "Done."
         except Exception as e:
             self._logger(f"Plugin '{name}' crashed during run(): {e}")
             self._notify(f"Plugin '{name}' failed — see the console for details.")
             traceback.print_exc()
-            return f"Sir, the '{name}' plugin failed: {e}"
-
-    # -- called by ui.py's settings tab to render per-plugin config forms --
-    def settings_schemas(self) -> list[dict]:
-        """One entry per settings SECTION, for enabled plugins that declare a
-        PLUGIN_SETTINGS schema. Sections are deduped by namespace so a suite of
-        plugins sharing one namespace (e.g. the printer trio) shows a single
-        form. Current stored values are merged in so the UI can pre-fill fields.
-        """
-        seen: set[str] = set()
-        out: list[dict] = []
-        for name, rec in self._plugins.items():
-            if not rec.settings or not get_plugin_enabled(name):
-                continue
-            ns = rec.settings.get("namespace") or rec.name
-            if ns in seen:
-                continue
-            seen.add(ns)
-            out.append({
-                "plugin":    rec.name,
-                "namespace": ns,
-                "title":     rec.settings.get("title") or rec.name,
-                "fields":    rec.settings.get("fields", []),
-                "values":    get_plugin_config(ns),
-                "action":    rec.settings.get("action"),   # optional test/connect button
-            })
-        return out
+            return f"Plugin '{name}' failed: {e}"
 
     # -- called by ui.py's Plugin Manager overlay --
     def list_for_ui(self) -> list[dict]:
@@ -285,6 +308,72 @@ def _load_error(path: Path, plugins_dir: Path, exc: Exception) -> str:
     return f"Failed to load: {exc}"
 
 
+def _static_constant(tree: ast.Module, name: str):
+    """Read a module-level literal assignment without executing plugin code."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(target, ast.Name) and target.id == name
+                   for target in node.targets):
+                return ast.literal_eval(node.value)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                return ast.literal_eval(node.value)
+    raise ValueError(f"Missing literal {name} assignment.")
+
+
+def _inspect_plugin_file(path: Path) -> PluginRecord:
+    """Validate plugin metadata from its syntax tree; never import the file."""
+    try:
+        raw = path.read_bytes()
+        if len(raw) > 1_000_000:
+            raise ValueError("Plugin source exceeds the 1 MB inspection limit.")
+        source = raw.decode("utf-8")
+        tree = ast.parse(source, filename=str(path))
+        plugin_meta = _static_constant(tree, "PLUGIN")
+        if not isinstance(plugin_meta, dict):
+            raise ValueError("PLUGIN must be a literal dictionary.")
+        name = plugin_meta.get("name")
+        if not isinstance(name, str) or not _NAME_RE.match(name):
+            raise ValueError("PLUGIN['name'] is missing or invalid.")
+        description = plugin_meta.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("PLUGIN['description'] is missing or empty.")
+        parameters = plugin_meta.get("parameters", dict(_DEFAULT_PARAMS))
+        if not isinstance(parameters, dict) or parameters.get("type") != "OBJECT":
+            raise ValueError("PLUGIN['parameters'] must be an OBJECT schema.")
+
+        settings = None
+        try:
+            candidate = _static_constant(tree, "PLUGIN_SETTINGS")
+            if isinstance(candidate, dict) and isinstance(candidate.get("fields"), list):
+                settings = candidate
+        except (ValueError, SyntaxError):
+            pass
+
+        return PluginRecord(
+            name=name,
+            description=description.strip(),
+            parameters=parameters,
+            run=None,
+            file=path.name,
+            valid=True,
+            error="",
+            settings=settings,
+            behavior=_opt_upper(plugin_meta.get("behavior"), _BEHAVIORS),
+            scheduling=_opt_upper(plugin_meta.get("scheduling"), _SCHEDULING),
+            tier=_opt_tier(plugin_meta.get("tier")),
+            brief=_opt_text(plugin_meta.get("brief")),
+            source_sha256=hashlib.sha256(raw).hexdigest(),
+        )
+    except Exception as exc:
+        return PluginRecord(
+            name=path.stem,
+            file=path.name,
+            valid=False,
+            error=f"Plugin metadata could not be safely inspected: {exc}",
+        )
+
+
 def discover_plugins(plugins_dir: Path, core_tool_names: set[str],
                       logger: Callable[[str], None] = print,
                       notify: Callable[[str], None] | None = None) -> PluginRegistry:
@@ -299,47 +388,34 @@ def discover_plugins(plugins_dir: Path, core_tool_names: set[str],
     valid: dict[str, PluginRecord] = {}
     all_records: list[PluginRecord] = []
 
-    files = sorted(plugins_dir.glob("*.py"), key=lambda p: p.name)  # deterministic order
+    files = sorted(plugins_dir.glob("*.py"), key=lambda p: p.name)
     for path in files:
         if path.name.startswith("_"):
             continue
-        try:
-            module_name = f"plugins.{path.stem}"
-            spec = importlib.util.spec_from_file_location(module_name, path)
-            if spec is None or spec.loader is None:
-                raise ImportError("could not build import spec")
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            try:
-                spec.loader.exec_module(module)
-            except Exception:
-                sys.modules.pop(module_name, None)
-                raise
 
-            rec = _validate(module, path.name)
-
-            if rec.valid and rec.name in core_tool_names:
-                rec = PluginRecord(name=rec.name, file=path.name,
-                                    error=f"Name '{rec.name}' collides with a core tool — rejected.")
-            elif rec.valid and rec.name in valid:
-                other = valid[rec.name].file
-                rec = PluginRecord(name=rec.name, file=path.name,
-                                    error=f"Name '{rec.name}' already used by plugin '{other}' — rejected.")
-
-        except Exception as e:
-            rec = PluginRecord(name=path.stem, file=path.name,
-                                error=_load_error(path, plugins_dir, e))
-            traceback.print_exc()
+        rec = _inspect_plugin_file(path)
+        if rec.valid and rec.name in core_tool_names:
+            rec = PluginRecord(
+                name=rec.name, file=path.name,
+                error=f"Name '{rec.name}' collides with a core tool — rejected.",
+            )
+        elif rec.valid and rec.name in valid:
+            other = valid[rec.name].file
+            rec = PluginRecord(
+                name=rec.name, file=path.name,
+                error=f"Name '{rec.name}' already used by plugin '{other}' — rejected.",
+            )
 
         all_records.append(rec)
         if rec.valid:
             valid[rec.name] = rec
-            logger(f"Plugin loaded: {rec.name} ({path.name})")
+            logger(f"Plugin discovered (not imported): {rec.name} ({path.name})")
         else:
             logger(f"Plugin rejected: {path.name} — {rec.error}")
 
     notify = notify or (lambda _msg: None)
     registry = PluginRegistry(valid, logger, notify)
+    registry._plugins_dir = plugins_dir
     registry._all_records = all_records
     rejected = len(all_records) - len(valid)
     logger(f"Plugin discovery complete: {len(valid)} active, "

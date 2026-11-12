@@ -341,8 +341,8 @@ def save_output_device(name: str) -> None:
 
 
 def get_plugin_enabled(plugin_name: str) -> bool:
-    """Plugins are enabled by default the moment they're discovered (opt-out model)."""
-    return load_api_keys().get("plugins_enabled", {}).get(plugin_name, True)
+    """Plugins must be explicitly enabled; new or unknown plugins default to OFF."""
+    return load_api_keys().get("plugins_enabled", {}).get(plugin_name, False)
 
 
 # ── Per-plugin settings ("tokens" / connection details) ───────────────────────
