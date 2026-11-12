@@ -915,7 +915,7 @@ class _BrowserSession:
         return await locator.evaluate("""el => {
             const control = el.closest(
                 'button, input[type="button"], input[type="submit"], '
-                + 'input[type="image"], [role="button"]'
+                + 'input[type="image"], [role="button"], a[href]'
             ) || el;
             const form = control.form || control.closest('form');
             const fields = form ? [...form.querySelectorAll(
