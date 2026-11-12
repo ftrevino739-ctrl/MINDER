@@ -1,3 +1,5 @@
+import hashlib
+import shlex
 import subprocess
 import sys
 import json
@@ -18,7 +20,7 @@ MAX_BUILD_ATTEMPTS = 3
 # Model choice lives in core/gemini.py, and so does the timeout and the
 # fallback ladder. Writing a model name here is what left this file hanging
 # forever whenever that one alias was unwell.
-from core import gemini
+from core import confirm, gemini, outcome
 
 
 def _get_api_key() -> str:
@@ -46,6 +48,22 @@ def _clean_code(text: str) -> str:
     return text.strip()
 
 
+def _safe_user_path(path: Path | str) -> bool:
+    """Only read, write or execute files inside the current user's home folder."""
+    try:
+        target = Path(path).expanduser().resolve(strict=False)
+        home = Path.home().resolve()
+        return target == home or target.is_relative_to(home)
+    except Exception:
+        return False
+
+
+def _file_signature(path: Path) -> tuple[int, int, str]:
+    stat = path.stat()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return stat.st_size, stat.st_mtime_ns, digest
+
+
 def _resolve_save_path(output_path: str, language: str) -> Path:
     ext_map = {
         "python": ".py", "py": ".py",
@@ -57,31 +75,104 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
         "sql": ".sql", "json": ".json", "rust": ".rs", "go": ".go",
     }
     if output_path:
-        p = Path(output_path)
+        p = Path(output_path).expanduser()
         return p if p.is_absolute() else DESKTOP / p
     ext = ext_map.get((language or "python").lower(), ".py")
     return DESKTOP / f"jarvis_code{ext}"
 
 
-def _read_file(file_path: str) -> tuple[str, str]:
-    if not file_path:
-        return "", "No file path provided."
-    p = Path(file_path)
-    if not p.exists():
-        return "", f"File not found: {file_path}"
+def _replace_existing_file(path: Path, content: str,
+                           expected_signature: tuple[int, int, str]) -> str:
+    if not _safe_user_path(path):
+        return outcome.failed("code_helper", "the save path is outside the user's home folder")
     try:
-        return p.read_text(encoding="utf-8"), ""
-    except Exception as e:
-        return "", f"Could not read file: {e}"
+        if not path.is_file() or _file_signature(path) != expected_signature:
+            return outcome.failed(
+                "code_helper",
+                "the existing file changed while approval was pending; nothing was overwritten",
+                path=str(path),
+            )
+        path.write_text(content, encoding="utf-8")
+        return outcome.done("code_helper", saved=str(path), verified=True)
+    except Exception as exc:
+        return outcome.failed("code_helper", f"could not replace the file: {exc}")
 
 
 def _save_file(path: Path, content: str) -> str:
+    path = Path(path).expanduser()
+    if not _safe_user_path(path):
+        return outcome.failed(
+            "code_helper",
+            "access denied: code files may only be read or written inside the user's home folder",
+            path=str(path),
+        )
     try:
+        if path.exists():
+            if not path.is_file():
+                return outcome.failed("code_helper", "the target is not a regular file", path=str(path))
+            previous = path.read_text(encoding="utf-8")
+            if previous == content:
+                return f"Saved to: {path} (unchanged)"
+            signature = _file_signature(path)
+            detail = (
+                f"File to replace: {path}\n"
+                f"Existing contents ({len(previous)} characters):\n{previous}\n\n"
+                f"New contents ({len(content)} characters):\n{content}\n\n"
+                "MINDER will replace this file only if it has not changed since this review."
+            )
+            if len(detail) > confirm.MAX_DETAIL_CHARS:
+                return outcome.failed(
+                    "code_helper",
+                    "the existing file and replacement are too large to display in full for approval; "
+                    "nothing was changed",
+                    path=str(path),
+                )
+            return confirm.request(
+                key=f"code-write:{path.resolve()}",
+                title=f"Approve replacing code file: {path.name}",
+                detail=detail,
+                run=lambda: _replace_existing_file(path, content, signature),
+            )
+
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        if not _safe_user_path(path):
+            return outcome.failed("code_helper", "access denied after resolving the save folder")
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+        except FileExistsError:
+            return outcome.failed(
+                "code_helper",
+                "a file appeared at this path while saving; nothing was overwritten",
+                path=str(path),
+            )
         return f"Saved to: {path}"
-    except Exception as e:
-        return f"Could not save: {e}"
+    except UnicodeError:
+        return outcome.failed(
+            "code_helper",
+            "the existing file is not UTF-8 text and will not be overwritten",
+            path=str(path),
+        )
+    except Exception as exc:
+        return outcome.failed("code_helper", f"could not save: {exc}", path=str(path))
+
+
+def _read_file(file_path: str) -> tuple[str, str]:
+    if not file_path:
+        return "", "No file path provided."
+    p = Path(file_path).expanduser()
+    if not _safe_user_path(p):
+        return "", f"Access denied: files outside the user's home folder cannot be read: {file_path}"
+    if not p.exists():
+        return "", f"File not found: {file_path}"
+    if not p.is_file():
+        return "", f"Not a regular file: {file_path}"
+    try:
+        if p.stat().st_size > 2_000_000:
+            return "", "File is too large for the code helper to read safely."
+        return p.read_text(encoding="utf-8"), ""
+    except Exception as exc:
+        return "", f"Could not read file: {exc}"
 
 
 def _preview(code: str, lines: int = 10) -> str:
@@ -182,10 +273,10 @@ Description: {description}
 Code:"""
 
     response = model.generate_content(prompt)
-    code     = _clean_code(response.text)
-    path     = _resolve_save_path(output_path, lang)
-    _save_file(path, code)
-    return code, path
+    code = _clean_code(response.text)
+    path = _resolve_save_path(output_path, lang)
+    status = _save_file(path, code)
+    return code, path, status
 
 
 def _fix_code(code: str, error_output: str, description: str) -> str:
@@ -208,40 +299,105 @@ Fixed code:"""
     return _clean_code(response.text)
 
 
-def _run_file(path: Path, args: list, timeout: int) -> str:
+def _execute_code_file(command: list[str], cwd: Path, timeout: int) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            cwd=str(cwd),
+            shell=False,
+        )
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+        parts = []
+        if output:
+            parts.append(f"Output:\n{output[:4_000]}")
+        if error:
+            parts.append(f"Stderr:\n{error[:4_000]}")
+        summary = "\n\n".join(parts) if parts else "Executed with no output."
+        if result.returncode == 0:
+            return outcome.done(
+                "code_helper",
+                "the approved file completed with exit code 0",
+                verified=True,
+                exit_code=0,
+                output=summary,
+            )
+        return outcome.failed(
+            "code_helper",
+            f"the approved file exited with code {result.returncode}",
+            exit_code=result.returncode,
+            output=summary,
+        )
+    except subprocess.TimeoutExpired:
+        return outcome.failed("code_helper", f"execution timed out after {timeout}s")
+    except FileNotFoundError as exc:
+        return outcome.failed("code_helper", f"interpreter not found: {exc}")
+    except Exception as exc:
+        return outcome.failed("code_helper", f"execution error: {exc}")
+
+
+def _run_file(path: Path, args: list | str, timeout: int) -> str:
+    path = Path(path).expanduser()
+    if not _safe_user_path(path):
+        return outcome.failed(
+            "code_helper",
+            "access denied: code files may only be executed inside the user's home folder",
+            path=str(path),
+        )
+    if not path.is_file():
+        return outcome.failed("code_helper", "the requested code file does not exist or is not a file",
+                              path=str(path))
+
     interpreters = {
-        ".py":  [sys.executable],
-        ".js":  ["node"],
-        ".ts":  ["ts-node"],
-        ".sh":  ["bash"],
+        ".py": [sys.executable],
+        ".js": ["node"],
+        ".ts": ["ts-node"],
+        ".sh": ["bash"],
         ".ps1": ["powershell", "-File"],
-        ".rb":  ["ruby"],
+        ".rb": ["ruby"],
         ".php": ["php"],
     }
     interp = interpreters.get(path.suffix.lower())
     if not interp:
-        return f"No interpreter for {path.suffix}."
+        return outcome.failed("code_helper", f"no interpreter is configured for {path.suffix}")
 
     try:
-        result = subprocess.run(
-            interp + [str(path)] + (args or []),
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=timeout, cwd=str(path.parent)
-        )
-        output = result.stdout.strip()
-        error  = result.stderr.strip()
-        parts  = []
-        if output: parts.append(f"Output:\n{output}")
-        if error:  parts.append(f"Stderr:\n{error}")
-        return "\n\n".join(parts) if parts else "Executed with no output."
+        if isinstance(args, str):
+            parsed_args = shlex.split(args, posix=(sys.platform != "win32"))
+        elif isinstance(args, (list, tuple)):
+            parsed_args = [str(value) for value in args]
+        else:
+            return outcome.failed("code_helper", "command arguments must be text or a list of strings")
+        if any("\0" in arg for arg in parsed_args):
+            return outcome.failed("code_helper", "command arguments contain invalid null characters")
 
-    except subprocess.TimeoutExpired:
-        return f"Timed out after {timeout}s."
-    except FileNotFoundError:
-        return f"Interpreter not found: {interp[0]}."
-    except Exception as e:
-        return f"Execution error: {e}"
+        target = path.resolve(strict=True)
+        if not _safe_user_path(target):
+            return outcome.failed("code_helper", "the resolved code file is outside the user's home folder")
+        command = interp + [str(target)] + parsed_args
+        detail = (
+            f"File: {target}\n"
+            f"Working directory: {target.parent}\n"
+            f"Exact command: {shlex.join(command)}\n"
+            f"Timeout: {timeout} seconds\n\n"
+            "Running this file executes its code with the current user's permissions. "
+            "Review the file and command before approving."
+        )
+        if len(detail) > confirm.MAX_DETAIL_CHARS:
+            return outcome.failed("code_helper", "the execution details are too large to review safely")
+        return confirm.request(
+            key=f"code-run:{target}",
+            title=f"Approve running code: {target.name}",
+            detail=detail,
+            run=lambda: _execute_code_file(command, target.parent, timeout),
+        )
+    except Exception as exc:
+        return outcome.failed("code_helper", f"could not prepare the execution request: {exc}")
 
 
 def _build(description, language, output_path, args, timeout, speak=None, player=None) -> str:
@@ -254,7 +410,11 @@ def _build(description, language, output_path, args, timeout, speak=None, player
     lang = language or "python"
 
     try:
-        code, path = _write(description, lang, output_path, player)
+        code, path, save_status = _write(description, lang, output_path, player)
+        if save_status.startswith("[CONFIRMATION_PENDING]"):
+            return f"Generated code is ready at {path}, but replacing the existing file awaits approval. {save_status}"
+        if not save_status.startswith("Saved to:"):
+            return f"Code was generated but not saved: {save_status}"
         print(f"[Code] ✅ Written: {path}")
     except Exception as e:
         msg = f"Could not write initial code: {e}"
@@ -268,6 +428,11 @@ def _build(description, language, output_path, args, timeout, speak=None, player
             player.write_log(f"[Code] Attempt {attempt}...")
 
         last_output = _run_file(path, args, timeout)
+        if "[CONFIRMATION_PENDING]" in last_output:
+            return (
+                f"Project code is saved at {path}. Running it requires approval "
+                f"of the exact file and command. {last_output}"
+            )
 
         if not _has_error(last_output):
             msg = (
@@ -303,7 +468,11 @@ def _write_action(description, language, output_path, player) -> str:
     if player:
         player.write_log("[Code] Writing code...")
     try:
-        code, path = _write(description, language, output_path, player)
+        code, path, status = _write(description, language, output_path, player)
+        if status.startswith("[CONFIRMATION_PENDING]"):
+            return status
+        if not status.startswith("Saved to:"):
+            return f"Code was generated but not saved: {status}"
         print(f"[Code] ✅ Written: {path}")
         return f"Code written. Saved to: {path}\n\nPreview:\n{_preview(code)}"
     except Exception as e:
@@ -342,6 +511,10 @@ Updated code:"""
         return f"Could not edit code: {e}"
 
     status = _save_file(Path(file_path), edited)
+    if status.startswith("[CONFIRMATION_PENDING]"):
+        return status
+    if not status.startswith("Saved to:"):
+        return f"File was not edited: {status}"
     print(f"[Code] ✅ Edited: {file_path}")
     return f"File edited. {status}\n\nPreview:\n{_preview(edited)}"
 
@@ -377,9 +550,11 @@ Explanation:"""
 def _run_action(file_path, args, timeout, player) -> str:
     if not file_path:
         return "Please provide a file path to run, sir."
-    p = Path(file_path)
-    if not p.exists():
-        return f"File not found: {file_path}"
+    p = Path(file_path).expanduser()
+    if not _safe_user_path(p):
+        return f"Access denied: cannot execute files outside the user's home folder: {file_path}"
+    if not p.is_file():
+        return f"File not found or not a regular file: {file_path}"
     if player:
         player.write_log(f"[Code] Running {p.name}...")
     return _run_file(p, args, timeout)
@@ -427,6 +602,10 @@ Optimized code:"""
         save_path = _resolve_save_path(output_path, lang)
 
     status = _save_file(save_path, optimized)
+    if status.startswith("[CONFIRMATION_PENDING]"):
+        return status
+    if not status.startswith("Saved to:"):
+        return f"Code was not optimized: {status}"
     print(f"[Code] ✅ Optimized: {save_path}")
 
     original_lines  = len(code.splitlines())
@@ -507,8 +686,13 @@ Be specific and actionable. If you see an error message, quote it exactly."""
             if code_match:
                 fixed_code = code_match.group(1).strip()
                 save_path  = Path(file_path)
-                _save_file(save_path, fixed_code)
-                analysis += f"\n\n✅ Fixed code has been saved to: {file_path}"
+                save_status = _save_file(save_path, fixed_code)
+                if save_status.startswith("[CONFIRMATION_PENDING]"):
+                    analysis += "\n\nThe suggested fix is ready, but replacing the file requires approval."
+                elif save_status.startswith("Saved to:"):
+                    analysis += f"\n\n✅ Fixed code has been saved to: {file_path}"
+                else:
+                    analysis += f"\n\nThe suggested fix was not saved: {save_status}"
                 print(f"[Code] ✅ Fixed code saved: {file_path}")
 
         return analysis
@@ -588,7 +772,7 @@ def code_helper(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "code_helper",
-    "description": "Writes, edits, explains, runs, or builds code files.",
+    "description": "Writes, edits, explains, runs, or builds code files. All paths are limited to the user's home folder. Existing files require review and approval before overwrite; running code always shows the exact file and command and requires human approval. Dependencies are never installed from an unreviewed model-supplied command.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
