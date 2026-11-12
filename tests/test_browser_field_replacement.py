@@ -89,7 +89,7 @@ class FakePage:
         return self.locators[description]
 
     def get_by_role(self, role, name=None):
-        return self.locators[name or role]
+        return self.locators.get(name or role, next(iter(self.locators.values())))
 
 
 def make_session(page):

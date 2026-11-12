@@ -246,7 +246,8 @@ class BrowserConfirmationTests(unittest.TestCase):
 
     def test_enter_in_searchbox_does_not_require_approval(self):
         context = {
-            "hasForm": False, "isEditable": False, "formLabel": "Search",
+            "hasForm": False, "isEditable": False, "isSearch": True,
+            "formLabel": "Search", "activeControl": "weather",
             "submitters": [], "fields": ["Search: weather"],
         }
         page = FakePage(context)

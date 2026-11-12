@@ -1153,6 +1153,7 @@ class _BrowserSession:
             if (!form) return {
                 hasForm: false,
                 isEditable: isEditable && !isSearch,
+                isSearch,
                 formLabel: activeLabel,
                 activeControl,
                 submitters: [],
@@ -1179,6 +1180,7 @@ class _BrowserSession:
             return {
                 hasForm: true,
                 isEditable: isEditable && !isSearch,
+                isSearch,
                 formLabel: form.getAttribute('aria-label')
                     || form.getAttribute('name') || activeLabel,
                 activeControl,
@@ -1221,7 +1223,10 @@ class _BrowserSession:
                 context = await self._form_submission_context(page)
                 if (
                     context.get("isEditable")
-                    or requires_screen_click_approval(context.get("activeControl", ""))
+                    or (
+                        not context.get("isSearch")
+                        and requires_screen_click_approval(context.get("activeControl", ""))
+                    )
                     or (
                         context.get("hasForm")
                         and requires_form_submission_approval(
