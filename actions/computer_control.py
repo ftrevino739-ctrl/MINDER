@@ -15,7 +15,8 @@ import time
 import random
 from pathlib import Path
 
-from core import appidentity, outcome
+from actions._browser_safety import requires_human_approval
+from core import appidentity, confirm, outcome
 from core.lazyimport import LazyModule, installed
 
 # pyautogui and pyperclip are imported on first USE, not at launch — see
@@ -456,6 +457,26 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
     )
 
 
+def _perform_screen_click(description: str) -> str:
+    """Find and click a screen target after any required human approval."""
+    coords = _screen_find(description)
+    if not coords:
+        return outcome.failed(
+            "computer_control",
+            f"the screen element '{description}' could not be located; nothing was clicked",
+            target=description,
+        )
+    time.sleep(0.2)
+    _click(x=coords[0], y=coords[1])
+    return outcome.unverified(
+        "computer_control",
+        "the requested screen target was clicked, but the resulting application "
+        "state was not independently verified",
+        target=description,
+        coordinates=f"{coords[0]},{coords[1]}",
+    )
+
+
 def _screen_find(description: str) -> tuple[int, int] | None:
     api_key = _get_api_key()
     if not api_key:
@@ -620,13 +641,27 @@ def computer_control(
             return f"{coords[0]},{coords[1]}" if coords else "NOT_FOUND"
 
         if action == "screen_click":
-            desc   = params.get("description", "")
-            coords = _screen_find(desc)
-            if coords:
-                time.sleep(0.2)
-                _click(x=coords[0], y=coords[1])
-                return f"Clicked '{desc}' at {coords}"
-            return f"Element not found on screen: '{desc}'"
+            desc = str(params.get("description", "")).strip()
+            if not desc:
+                return outcome.failed("computer_control", "no screen target was described")
+            if requires_human_approval(desc):
+                detail = (
+                    f"Requested screen target: {desc}\n"
+                    "MINDER will locate this target again after approval and click it. "
+                    "The effect in the application cannot be guaranteed."
+                )
+                if len(detail) > confirm.MAX_DETAIL_CHARS:
+                    return outcome.failed(
+                        "computer_control",
+                        "the requested screen action is too long to display for approval",
+                    )
+                return confirm.request(
+                    key="screen-click",
+                    title=f"Approve screen click: {desc}",
+                    detail=detail,
+                    run=lambda: _perform_screen_click(desc),
+                )
+            return _perform_screen_click(desc)
 
         if action == "wait":
             secs = float(params.get("seconds", 1.0))
