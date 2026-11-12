@@ -1,4 +1,5 @@
 import os
+import shlex
 import subprocess
 import sys
 import hashlib
@@ -7,7 +8,7 @@ import re
 import shutil
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 
 def get_base_dir():
@@ -30,7 +31,7 @@ def _projects_root() -> Path:
     return PROJECTS_DIR
 MAX_FIX_ATTEMPTS = 5
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
-from core import gemini
+from core import confirm, gemini, outcome
 
 MODEL_PLANNER    = gemini.SMART
 MODEL_WRITER     = gemini.SMART
@@ -188,6 +189,71 @@ JSON:"""
             raise RateLimitError(str(e))
         raise
 
+def _safe_project_file_path(project_dir: Path, raw_path: str) -> Path | None:
+    """Resolve a model-planned file only when it stays inside a new project folder."""
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    normalized = raw_path.strip().replace("\\", "/")
+    windows_path = PureWindowsPath(normalized)
+    if windows_path.is_absolute() or normalized.startswith("/") or ":" in normalized.split("/", 1)[0]:
+        return None
+    parts = normalized.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    try:
+        root = Path(project_dir).resolve()
+        candidate = root.joinpath(*parts).resolve(strict=False)
+        if candidate == root or not candidate.is_relative_to(root):
+            return None
+        return candidate
+    except Exception:
+        return None
+
+
+def _execute_project_command(command: list[str], project_dir: Path,
+                             timeout: int) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            cwd=str(project_dir),
+            shell=False,
+        )
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        parts = []
+        if stdout:
+            parts.append(f"STDOUT:\n{stdout[:4_000]}")
+        if stderr:
+            parts.append(f"STDERR:\n{stderr[:4_000]}")
+        output = "\n\n".join(parts) if parts else "Ran with no output."
+        if result.returncode == 0:
+            return outcome.done(
+                "dev_agent",
+                "the approved project command completed with exit code 0",
+                exit_code=0,
+                output=output,
+                verified=True,
+            )
+        return outcome.failed(
+            "dev_agent",
+            f"the approved project command exited with code {result.returncode}",
+            exit_code=result.returncode,
+            output=output,
+        )
+    except subprocess.TimeoutExpired:
+        return outcome.failed(
+            "dev_agent",
+            f"the approved project command timed out after {timeout} seconds",
+        )
+    except Exception as exc:
+        return outcome.failed("dev_agent", f"project command failed: {exc}")
+
+
 def _write_file(
     file_info: dict,
     project_description: str,
@@ -199,6 +265,15 @@ def _write_file(
     model = _get_model(MODEL_WRITER)
 
     file_path = file_info["path"]
+    safe_path = _safe_project_file_path(project_dir, file_path)
+    if safe_path is None:
+        raise ValueError(
+            f"Refusing an unsafe project file path from the plan: {file_path!r}"
+        )
+    if safe_path.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite an existing project file: {safe_path}"
+        )
     file_desc = file_info.get("description", "")
     file_imports = file_info.get("imports", [])
 
@@ -260,9 +335,12 @@ Code for {file_path}:"""
         response = model.generate_content(prompt)
         code = _strip_fences(response.text)
 
-        full_path = project_dir / file_path
+        full_path = safe_path
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(code, encoding="utf-8")
+        if _safe_project_file_path(project_dir, file_path) != full_path:
+            raise ValueError(f"Project file path changed during generation: {file_path!r}")
+        with full_path.open("x", encoding="utf-8") as handle:
+            handle.write(code)
 
         print(f"[DevAgent] ✅ Written: {file_path} ({len(code)} chars)")
         return code
@@ -272,40 +350,102 @@ Code for {file_path}:"""
             raise RateLimitError(str(e))
         raise
 
+_SAFE_REQUIREMENT = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:\s*(?:===|==|~=|!=|>=|<=|>|<)\s*[A-Za-z0-9.*+!_-]+)?$"
+)
+
+
+def _install_dependency_list(dependencies: list[str], project_dir: Path) -> str:
+    command = [sys.executable, "-m", "pip", "install", *dependencies]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            cwd=str(project_dir),
+            shell=False,
+        )
+        summary = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode == 0:
+            return outcome.done(
+                "dev_agent",
+                "the human-approved Python dependencies were installed",
+                packages=dependencies,
+                output=summary[-4_000:],
+                verified=True,
+            )
+        return outcome.failed(
+            "dev_agent",
+            "the approved dependency installation failed",
+            packages=dependencies,
+            output=summary[-4_000:],
+        )
+    except subprocess.TimeoutExpired:
+        return outcome.failed("dev_agent", "dependency installation timed out")
+    except Exception as exc:
+        return outcome.failed("dev_agent", f"dependency installation failed: {exc}")
+
+
 def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
     if not dependencies:
         return "No external dependencies."
+    if not isinstance(dependencies, list) or any(
+        not isinstance(dep, str) or not _SAFE_REQUIREMENT.fullmatch(dep.strip())
+        for dep in dependencies
+    ):
+        return outcome.failed(
+            "dev_agent",
+            "the planner returned an unsupported dependency specifier; "
+            "only plain package names with version constraints are allowed",
+        )
 
-    to_install = []
-    for dep in dependencies:
-        pkg_name = re.split(r"[>=<!]", dep)[0].strip()
+    requested = [dep.strip() for dep in dependencies]
+    missing = []
+    for requirement in requested:
+        package_name = re.split(r"\s*(?:===|==|~=|!=|>=|<=|>|<)\s*", requirement, maxsplit=1)[0]
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", pkg_name],
-            capture_output=True, text=True
+            [sys.executable, "-m", "pip", "show", package_name],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            shell=False,
         )
         if result.returncode != 0:
-            to_install.append(dep)
-        else:
-            print(f"[DevAgent] ✓ Already installed: {pkg_name}")
+            missing.append(requirement)
 
-    if not to_install:
-        return f"All dependencies already installed: {', '.join(dependencies)}"
+    if not missing:
+        return f"All dependencies are already installed: {', '.join(requested)}"
 
-    print(f"[DevAgent] 📦 Installing: {to_install}")
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install"] + to_install,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(project_dir)
+    detail = (
+        f"Project folder: {project_dir}\n"
+        "Packages that need installation:\n"
+        + "\n".join(f"  • {package}" for package in missing)
+        + "\n\nExact command:\n"
+        + shlex.join([sys.executable, "-m", "pip", "install", *missing])
+        + "\n\nInstalling packages downloads and runs third-party package code "
+        "with the current user's Python environment permissions. Review the "
+        "package names before approving."
+    )
+    if len(detail) > confirm.MAX_DETAIL_CHARS:
+        return outcome.failed(
+            "dev_agent",
+            "the dependency list is too large to display for approval; "
+            "nothing was installed",
         )
-        if result.returncode == 0:
-            return f"Installed: {', '.join(to_install)}"
-        return f"Install warning (non-fatal): {result.stderr[:200]}"
-    except subprocess.TimeoutExpired:
-        return "Dependency install timed out (non-fatal)."
-    except Exception as e:
-        return f"Install error (non-fatal): {e}"
+    return confirm.request(
+        key=f"dev-agent-dependencies:{project_dir}",
+        title=f"Approve installing {len(missing)} project dependencies",
+        detail=detail,
+        run=lambda: _install_dependency_list(missing, project_dir),
+    )
+
+
 
 def _open_vscode(project_dir: Path) -> bool:
     """Open the editor using a real executable; never pass a .cmd file to a shell."""
@@ -344,59 +484,57 @@ def _open_vscode(project_dir: Path) -> bool:
     return False
 
 def _run_project(run_command: str, project_dir: Path, timeout: int = 30) -> str:
-    print(f"[DevAgent] 🚀 Running: {run_command}")
     try:
-        parts = run_command.split()
-        if parts[0].lower() == "python":
+        root = Path(_projects_root()).resolve()
+        working = Path(project_dir).resolve(strict=True)
+        if not working.is_dir() or not working.is_relative_to(root):
+            return outcome.failed(
+                "dev_agent",
+                "refusing to run a project outside MINDER's generated-project workspace",
+                path=str(project_dir),
+            )
+        if not isinstance(run_command, str) or not run_command.strip():
+            return outcome.failed("dev_agent", "the project plan did not provide a run command")
+        parts = shlex.split(run_command, posix=(sys.platform != "win32"))
+        if not parts:
+            return outcome.failed("dev_agent", "the project run command is empty")
+        if parts[0].lower() in {"python", "python3", "py"}:
             parts[0] = sys.executable
-
-        result = subprocess.run(
-            parts,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=timeout,
-            cwd=str(project_dir)
+        if any("\0" in part for part in parts):
+            return outcome.failed("dev_agent", "the project run command contains invalid characters")
+        timeout = max(1, min(int(timeout), 300))
+        detail = (
+            f"Project folder: {working}\n"
+            f"Exact command: {shlex.join(parts)}\n"
+            f"Timeout: {timeout} seconds\n\n"
+            "Running a generated project executes its code with the current "
+            "user's permissions. Review the command and project files before approving."
         )
-
-        stdout = result.stdout.strip()
-        stderr = result.stderr.strip()
-
-        combined_parts = []
-        if stdout:
-            combined_parts.append(f"STDOUT:\n{stdout}")
-        if stderr:
-            combined_parts.append(f"STDERR:\n{stderr}")
-
-        return "\n\n".join(combined_parts) if combined_parts else "Ran with no output."
-
-    except subprocess.TimeoutExpired:
-        return f"Timed out after {timeout}s — long-running app (server/GUI) is likely working."
-    except FileNotFoundError as e:
-        return f"Command not found: {e}"
-    except Exception as e:
-        return f"Run error: {e}"
+        if len(detail) > confirm.MAX_DETAIL_CHARS:
+            return outcome.failed("dev_agent", "the project command is too long to display for review")
+        print(f"[DevAgent] Awaiting approval to run: {shlex.join(parts)}")
+        return confirm.request(
+            key=f"dev-agent-run:{working}",
+            title=f"Approve running project: {working.name}",
+            detail=detail,
+            run=lambda: _execute_project_command(parts, working, timeout),
+        )
+    except Exception as exc:
+        return outcome.failed("dev_agent", f"could not prepare project execution: {exc}")
 
 def _try_auto_install(error_output: str, project_dir: Path) -> bool:
-    """If there is a ModuleNotFoundError, tries to auto-install the missing package."""
-    pattern = re.compile(
-        r"No module named ['\"]([a-zA-Z0-9_\-\.]+)['\"]", re.IGNORECASE
+    """Never install a model-inferred package without a separate human review."""
+    match = re.search(
+        r"No module named ['\"]([a-zA-Z0-9_\-\.]+)['\"]",
+        error_output or "",
+        re.IGNORECASE,
     )
-    match = pattern.search(error_output)
-    if not match:
-        return False
-
-    pkg = match.group(1).replace("_", "-").split(".")[0]
-    print(f"[DevAgent] 🔧 Auto-installing missing package: {pkg}")
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", pkg],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=60, cwd=str(project_dir)
+    if match:
+        print(
+            f"[DevAgent] ⚠️ Missing package '{match.group(1)}'. "
+            "Automatic installation is disabled; request a dependency review first."
         )
-        return result.returncode == 0
-    except Exception:
-        return False
+    return False
 
 def _fix_files(
     error_output: str,
@@ -515,15 +653,49 @@ def _build_project(
         if speak: speak(msg)
         return msg
 
-    proj_name    = project_name or plan.get("project_name", "minder_project")
-    proj_name    = re.sub(r"[^\w\-]", "_", proj_name)
-    project_dir  = _projects_root() / proj_name
-    project_dir.mkdir(parents=True, exist_ok=True)
+    raw_project_name = project_name or plan.get("project_name", "minder_project")
+    proj_name = re.sub(r"[^\w\-]", "_", str(raw_project_name)).strip("_")
+    if not proj_name or proj_name in {".", ".."}:
+        return "The project planner returned an invalid folder name; no files were created."
+
+    projects_root = _projects_root()
+    try:
+        projects_root.mkdir(parents=True, exist_ok=True)
+        projects_root = projects_root.resolve()
+        project_dir = (projects_root / proj_name).resolve(strict=False)
+        if project_dir.parent != projects_root:
+            return "The project folder would escape MINDER's workspace; no files were created."
+        # A build is always a new project. Existing folders are user data and
+        # must never be silently reused or overwritten by a new plan.
+        project_dir.mkdir(exist_ok=False)
+    except FileExistsError:
+        return (
+            f"A project named '{proj_name}' already exists at {projects_root / proj_name}. "
+            "Nothing was changed; choose another project name or use improve mode."
+        )
+    except Exception as exc:
+        return f"Could not create the new project folder safely: {exc}"
 
     files        = plan.get("files", [])
     entry_point  = plan.get("entry_point", "main.py")
     run_command  = plan.get("run_command", f"python {entry_point}")
     dependencies = plan.get("dependencies", [])
+
+    if not isinstance(files, list) or not files:
+        return f"The planner did not provide a valid file list for '{proj_name}'."
+    paths = []
+    for info in files:
+        if not isinstance(info, dict):
+            return f"The planner returned an invalid file entry for '{proj_name}'."
+        safe = _safe_project_file_path(project_dir, info.get("path", ""))
+        if safe is None:
+            return f"The planner returned an unsafe file path ({info.get('path')!r}); nothing was written."
+        paths.append(safe)
+    if len(set(paths)) != len(paths):
+        return f"The planner returned duplicate file paths for '{proj_name}'; nothing was written."
+    safe_entry = _safe_project_file_path(project_dir, entry_point)
+    if safe_entry is None or safe_entry not in paths:
+        return f"The entry point '{entry_point}' is not a file in the new project; nothing was written."
 
     log(f"Project: {proj_name} | Files: {len(files)} | Entry: {entry_point}")
     with _state_lock:
@@ -587,6 +759,17 @@ def _build_project(
         log(f"Installing {', '.join(dependencies)}...")
         install_result = _install_dependencies(dependencies, project_dir)
         log(install_result)
+        if "[CONFIRMATION_PENDING]" in install_result:
+            return (
+                f"Project files were generated at {project_dir}. "
+                "Installing its missing dependencies now requires human approval. "
+                + install_result
+            )
+        if "status=failed" in install_result:
+            return (
+                f"Project files were generated at {project_dir}, but dependency "
+                f"installation was refused: {install_result}"
+            )
 
     _open_vscode(project_dir)
 
@@ -597,6 +780,12 @@ def _build_project(
     for attempt in range(1, MAX_FIX_ATTEMPTS + 1):
         log(f"Running project (attempt {attempt}/{MAX_FIX_ATTEMPTS})...")
         last_output = _run_project(run_command, project_dir, timeout)
+        if "[CONFIRMATION_PENDING]" in last_output:
+            return (
+                f"Project files were generated at {project_dir}. "
+                "Running the new code requires a separate human approval of "
+                "the exact command. " + last_output
+            )
         log(f"Output preview: {last_output[:150]}")
 
         if not _has_error(last_output, run_command):
@@ -1649,8 +1838,11 @@ TOOL = {
         "a path they name: fixes bugs, adds features, refactors. When a folder is "
         "uploaded, ANY request to add, create or change something is improve. "
         "Both modes run in the background with progress on screen. "
-        "mode='build' creates a brand-new standalone project, only when no "
-        "folder is meant. mode='status' reports what the coding agent is doing or "
+        "mode='build' creates a brand-new standalone project in an unused folder; "
+        "it never overwrites an existing project. Planned file paths are confined "
+        "to that new folder. Dependency installation and the exact run command "
+        "each require a separate human approval on the HUD. mode='status' reports "
+        "what the coding agent is doing or "
         "did — use it whenever the user asks about the coding work. "
         "Before calling with improve or build, FIRST say one short sentence that "
         "you are handing it to the coding agent, then call it in the same turn."),
