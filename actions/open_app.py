@@ -118,7 +118,8 @@ def _launch_windows(app_name: str) -> bool:
     # Checked before ":" appears anywhere else — a Windows path has one too,
     # at index 1, and that is a file, not a scheme.
     scheme, _, rest = app_name.partition(":")
-    if rest and scheme and scheme.isalnum() and len(scheme) > 1:
+    if (rest and scheme and len(scheme) > 1 and scheme[0].isalpha() and
+            all(ch.isalnum() or ch in "+.-" for ch in scheme[1:])):
         if scheme.casefold() in {
             "file", "javascript", "data", "vbscript", "shell",
             "ms-msdt", "ms-officecmd", "search-ms",
