@@ -8,6 +8,8 @@ import importlib.util
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from actions._browser_safety import requires_form_submission_approval
+
 _real_find_spec = importlib.util.find_spec
 
 
