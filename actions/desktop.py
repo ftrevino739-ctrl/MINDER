@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import platform
+import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 from datetime import datetime
 
@@ -16,6 +18,64 @@ from core import confirm, outcome
 # mouse or the keyboard any more; that is computer_control's job.
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
+_MAX_WALLPAPER_DOWNLOAD_BYTES = 20 * 1024 * 1024
+_WALLPAPER_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def _wallpaper_cache_dir() -> Path:
+    cache = Path.home() / ".minder" / "wallpapers"
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache
+
+
+def _download_wallpaper(url: str) -> Path:
+    """Download an HTTP(S) image to an exclusive, persistent MINDER cache file."""
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only HTTP and HTTPS image URLs are supported.")
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix not in _WALLPAPER_EXTENSIONS:
+        raise ValueError("The URL must end in a supported image extension.")
+
+    import tempfile
+    target = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="wallpaper-", suffix=suffix,
+            dir=_wallpaper_cache_dir(), delete=False,
+        ) as handle:
+            target = Path(handle.name)
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "MINDER/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=20) as response:
+                declared = response.headers.get("Content-Length")
+                if declared:
+                    try:
+                        if int(declared) > _MAX_WALLPAPER_DOWNLOAD_BYTES:
+                            raise ValueError("Wallpaper image exceeds the 20 MB limit.")
+                    except ValueError as exc:
+                        if "20 MB" in str(exc):
+                            raise
+                total = 0
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_WALLPAPER_DOWNLOAD_BYTES:
+                        raise ValueError("Wallpaper image exceeds the 20 MB limit.")
+                    handle.write(chunk)
+        if target.stat().st_size == 0:
+            raise ValueError("The downloaded image is empty.")
+        return target
+    except Exception:
+        if target is not None:
+            try:
+                target.unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise
 
 
 def _get_base_dir() -> Path:
@@ -118,8 +178,16 @@ def _apply_wallpaper(image_path: str) -> str:
             if path.suffix.lower() in {".webp", ".png"}:
                 try:
                     from PIL import Image
-                    bmp_path = Path(tempfile.mktemp(suffix=".bmp"))
-                    Image.open(path).convert("RGB").save(bmp_path, "BMP")
+                    with tempfile.NamedTemporaryFile(
+                        prefix="wallpaper-", suffix=".bmp",
+                        dir=_wallpaper_cache_dir(), delete=False,
+                    ) as temp_handle:
+                        bmp_path = Path(temp_handle.name)
+                    try:
+                        Image.open(path).convert("RGB").save(bmp_path, "BMP")
+                    except Exception:
+                        bmp_path.unlink(missing_ok=True)
+                        raise
                     path = bmp_path
                 except ImportError:
                     pass 
@@ -236,20 +304,26 @@ def set_wallpaper(image_path: str) -> str:
 
 
 def set_wallpaper_from_url(url: str) -> str:
+    temp_path = None
     try:
-        import urllib.request
-        suffix = Path(url.split("?")[0]).suffix or ".jpg"
-        tmp    = Path(tempfile.mktemp(suffix=suffix))
-        urllib.request.urlretrieve(url, str(tmp))
-        result = set_wallpaper(str(tmp))
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
+        temp_path = _download_wallpaper(url)
+        result = set_wallpaper(str(temp_path))
+        if result.startswith("status=failed") or "could not" in result.lower():
+            temp_path.unlink(missing_ok=True)
+        # Keep the downloaded image in the MINDER cache after success: Windows
+        # and desktop environments may continue reading it as the active image.
         return result
-    except Exception as e:
-        return outcome.failed("set_wallpaper",
-                              f"the image could not be downloaded: {e}", url=url)
+    except Exception as exc:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return outcome.failed(
+            "set_wallpaper",
+            f"the image could not be downloaded or applied: {exc}",
+            url=url,
+        )
 
 
 def get_current_wallpaper() -> str:
