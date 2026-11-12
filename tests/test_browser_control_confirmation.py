@@ -379,6 +379,116 @@ class BrowserConfirmationTests(unittest.TestCase):
         locator.click.assert_not_awaited()
 
 
+
+    def test_same_site_link_away_from_unsaved_draft_requires_approval(self):
+        details = {
+            "label": "Open settings",
+            "formLabel": "",
+            "identifiers": "settings-link",
+            "isActionControl": False,
+            "isSubmitControl": False,
+            "isNavigationLink": True,
+            "href": "https://mail.example.test/settings",
+            "fields": [],
+        }
+        dirty = [{
+            "label": "Message",
+            "type": "textarea",
+            "password": False,
+            "length": 10,
+            "value": "Unsaved!!!",
+            "id": "message",
+            "name": "message",
+        }]
+        locator = FakeLocator(details)
+        page = FakePage()
+        captured = {}
+        session = make_session()
+        session._page_dirty_snapshot = AsyncMock(return_value=dirty)
+
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session._click_locator(page, locator, "Open settings"))
+
+        self.assertEqual(result, "PENDING")
+        locator.click.assert_not_awaited()
+        self.assertIn("Unsaved!!!", captured["detail"])
+        self.assertIn("settings-link", captured["detail"])
+
+    def test_browser_link_approval_refuses_if_draft_changes(self):
+        details = {
+            "label": "Open settings",
+            "formLabel": "",
+            "identifiers": "settings-link",
+            "isActionControl": False,
+            "isSubmitControl": False,
+            "isNavigationLink": True,
+            "href": "https://mail.example.test/settings",
+            "fields": [],
+        }
+        original = [{"label": "Message", "value": "before", "password": False}]
+        changed = [{"label": "Message", "value": "after", "password": False}]
+        locator = FakeLocator(details)
+        page = FakePage()
+        captured = {}
+        session = make_session()
+        dirty_check = AsyncMock(side_effect=[original, changed])
+        session._page_dirty_snapshot = dirty_check
+
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            self.assertEqual(
+                asyncio.run(session._click_locator(page, locator, "Open settings")),
+                "PENDING",
+            )
+        refused = captured["run"]()
+        self.assertIn("unsaved form data changed", refused)
+        locator.click.assert_not_awaited()
+
+    def test_same_document_fragment_link_does_not_prompt(self):
+        locator = FakeLocator({
+            "label": "Jump to details",
+            "formLabel": "",
+            "identifiers": "",
+            "isActionControl": False,
+            "isSubmitControl": False,
+            "isNavigationLink": True,
+            "href": "#details",
+            "fields": [],
+        })
+        page = FakePage()
+        session = make_session()
+        session._page_dirty_snapshot = AsyncMock(
+            return_value=[{"label": "Draft", "value": "text"}]
+        )
+        with patch.object(browser_module.confirm, "request") as request:
+            result = asyncio.run(session._click_locator(page, locator, "Jump to details"))
+        self.assertIn("Clicked", result)
+        locator.click.assert_awaited_once()
+        session._page_dirty_snapshot.assert_not_awaited()
+        request.assert_not_called()
+
+    def test_non_http_browser_link_scheme_is_blocked(self):
+        locator = FakeLocator({
+            "label": "Email support",
+            "formLabel": "",
+            "identifiers": "",
+            "isActionControl": False,
+            "isSubmitControl": False,
+            "isNavigationLink": True,
+            "href": "mailto:support@example.test",
+            "fields": [],
+        })
+        page = FakePage()
+        session = make_session()
+        result = asyncio.run(session._click_locator(page, locator, "Email support"))
+        self.assertIn("status=failed", result)
+        locator.click.assert_not_awaited()
+
     def test_ordinary_navigation_click_does_not_prompt(self):
         locator = FakeLocator({"label": "Home", "formLabel": "", "fields": []})
         page = FakePage()
