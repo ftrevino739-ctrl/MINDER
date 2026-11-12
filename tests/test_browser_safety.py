@@ -1,7 +1,11 @@
 """Regression tests for browser URL and high-impact action safeguards."""
 from __future__ import annotations
 import unittest
-from actions._browser_safety import normalize_browser_url, requires_human_approval
+from actions._browser_safety import (
+    normalize_browser_url,
+    requires_human_approval,
+    requires_screen_click_approval,
+)
 
 
 class BrowserSafetyTests(unittest.TestCase):
@@ -40,6 +44,17 @@ class BrowserSafetyTests(unittest.TestCase):
                       "Publicar", "Pagar ahora", "Enviar mensaje", "Cancelar reserva"):
             with self.subTest(label=label):
                 self.assertTrue(requires_human_approval(label))
+
+    def test_screen_click_unknown_targets_require_approval(self):
+        for description in ("Continue", "Confirm", "Share document", "button 3"):
+            with self.subTest(description=description):
+                self.assertTrue(requires_screen_click_approval(description))
+
+    def test_screen_click_safe_navigation_targets_do_not_require_approval(self):
+        for description in ("Home", "Back", "Search", "New tab", "Play",
+                            "Settings", "Open Calculator", "Buscar"):
+            with self.subTest(description=description):
+                self.assertFalse(requires_screen_click_approval(description))
 
     def test_ignores_ordinary_navigation_controls(self):
         for label in ("Home", "Open menu", "Next page", "Search", "Learn more"):

@@ -18,6 +18,7 @@ from actions._browser_safety import (
     normalize_browser_url,
     requires_form_submission_approval,
     requires_human_approval,
+    requires_screen_click_approval,
 )
 from core import appidentity, confirm, outcome
 
@@ -957,7 +958,37 @@ class _BrowserSession:
         return await page.evaluate("""() => {
             const active = document.activeElement;
             const form = active && (active.form || active.closest('form'));
-            if (!form) return {hasForm: false, formLabel: '', submitters: [], fields: []};
+            const activeType = (active?.getAttribute('type') || '').toLowerCase();
+            const activeRole = (active?.getAttribute('role') || '').toLowerCase();
+            const activeLabel = (
+                active?.getAttribute('aria-label')
+                || active?.getAttribute('placeholder')
+                || active?.getAttribute('name')
+                || ''
+            ).trim();
+            const isEditable = Boolean(active && (
+                active.matches('textarea, [contenteditable="true"], [role="textbox"]')
+                || (active.matches('input') && ![
+                    'button', 'submit', 'reset', 'checkbox', 'radio', 'file',
+                    'hidden', 'image'
+                ].includes(activeType))
+            ));
+            const isSearch = activeType === 'search'
+                || activeRole === 'searchbox'
+                || /search|buscar/i.test(activeLabel);
+            const activeValue = isEditable && activeType !== 'password'
+                ? (active.isContentEditable ? active.innerText : (active.value || ''))
+                : '';
+            const activeField = activeValue
+                ? (activeLabel || 'Focused field') + ': ' + String(activeValue).slice(0, 2000)
+                : null;
+            if (!form) return {
+                hasForm: false,
+                isEditable: isEditable && !isSearch,
+                formLabel: activeLabel,
+                submitters: [],
+                fields: activeField ? [activeField] : []
+            };
             const submitters = [...form.querySelectorAll(
                 'button, input[type="submit"], input[type="image"], [role="button"]'
             )].map(el => (el.getAttribute('aria-label') || el.innerText
@@ -978,10 +1009,13 @@ class _BrowserSession:
             }).filter(Boolean);
             return {
                 hasForm: true,
+                isEditable: isEditable && !isSearch,
                 formLabel: form.getAttribute('aria-label')
-                    || form.getAttribute('name') || '',
+                    || form.getAttribute('name') || activeLabel,
                 submitters,
-                fields
+                fields: activeField && !fields.some(value => value.startsWith(
+                    (activeLabel || 'Focused field') + ':'
+                )) ? [...fields, activeField] : fields
             };
         }""")
 
@@ -1015,8 +1049,14 @@ class _BrowserSession:
         try:
             if key.strip().lower() in {"enter", "numpadenter"}:
                 context = await self._form_submission_context(page)
-                if context.get("hasForm") and requires_form_submission_approval(
-                    context.get("formLabel", ""), context.get("submitters", [])
+                if (
+                    context.get("isEditable")
+                    or (
+                        context.get("hasForm")
+                        and requires_form_submission_approval(
+                            context.get("formLabel", ""), context.get("submitters", [])
+                        )
+                    )
                 ):
                     page_url = page.url
                     page_title = await page.title()

@@ -9,12 +9,16 @@ _HOST_PORT = re.compile(
 )
 
 _SENSITIVE_ACTION = re.compile(
-    r"(?<![\w])(?:send|submit|post|publish|buy|purchase|pay|payment|transfer|"
-    r"delete|remove|cancel|book|reserve|subscribe|unsubscribe|place\s+order|"
-    r"confirm|enviar|mandar|publicar|comprar|pagar|transferir|eliminar|borrar|"
-    r"cancelar|reservar|suscribir|ordenar)(?![\w])",
+    r"(?<![\w])(?:send|submit|post|publish|upload|buy|purchase|pay|payment|"
+    r"transfer|delete|remove|cancel|book|reserve|subscribe|unsubscribe|"
+    r"place\s+order|checkout|confirm|approve|authorize|allow|install|"
+    r"reset|revoke|share|connect|disconnect|save\s+changes|"
+    r"enviar|mandar|publicar|subir|comprar|pagar|transferir|eliminar|borrar|"
+    r"cancelar|reservar|suscribir|ordenar|confirmar|autorizar|permitir|"
+    r"instalar|restablecer|revocar|compartir)(?![\w])",
     re.IGNORECASE,
 )
+
 
 
 def normalize_browser_url(value: str) -> str:
@@ -73,6 +77,30 @@ def requires_form_submission_approval(form_label: str, submitters: list[str]) ->
     if not labels:
         return True
     return not all(_SAFE_SEARCH_SUBMITTER.fullmatch(label) for label in labels)
+
+
+_SAFE_SCREEN_TARGET = re.compile(
+    r"^(?:home|back|forward|next|previous|menu|open menu|close menu|"
+    r"search|new tab|play|pause|resume|volume up|volume down|mute|"
+    r"full ?screen|fullscreen|minimi[sz]e|maximi[sz]e|task manager|"
+    r"settings|open settings|show desktop|"
+    r"inicio|atr[aá]s|adelante|siguiente|anterior|men[uú]|buscar|nueva pesta[nñ]a|"
+    r"reproducir|pausar|reanudar|subir volumen|bajar volumen|silenciar|"
+    r"pantalla completa|minimizar|maximizar|configuraci[oó]n|mostrar escritorio)$",
+    re.IGNORECASE,
+)
+
+
+def requires_screen_click_approval(description: str) -> bool:
+    """Unknown screen targets require approval; obvious navigation/media controls are exempt."""
+    value = (description or "").strip()
+    if not value or requires_human_approval(value):
+        return True
+    if _SAFE_SCREEN_TARGET.fullmatch(value):
+        return False
+    if re.fullmatch(r"(?:open|launch|start|abrir|iniciar)\s+[\w .+-]{2,80}", value, re.IGNORECASE):
+        return False
+    return True
 
 
 def requires_human_approval(*descriptions: str) -> bool:
