@@ -119,6 +119,12 @@ def _launch_windows(app_name: str) -> bool:
     # at index 1, and that is a file, not a scheme.
     scheme, _, rest = app_name.partition(":")
     if rest and scheme and scheme.isalnum() and len(scheme) > 1:
+        if scheme.casefold() in {
+            "file", "javascript", "data", "vbscript", "shell",
+            "ms-msdt", "ms-officecmd", "search-ms",
+        }:
+            print(f"[open_app] blocked unsafe URI scheme: {scheme!r}")
+            return False
         try:
             os.startfile(app_name)               # noqa: S606 — no shell involved
             return True
