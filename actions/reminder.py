@@ -178,7 +178,8 @@ def _schedule_windows(target_dt: datetime, task_name: str,
         '</Task>'
     )
 
-    xml_path.write_text(xml_content, encoding="utf-16")
+    with xml_path.open("x", encoding="utf-16") as handle:
+        handle.write(xml_content)
 
     result = subprocess.run(
         ["schtasks", "/Create", "/TN", task_name, "/XML", str(xml_path), "/F"],
@@ -308,7 +309,10 @@ def reminder(
 
     os_name    = _get_os()
     safe_msg   = _sanitise(message)
-    task_name  = f"JARVISReminder_{target_dt.strftime('%Y%m%d_%H%M%S')}"
+    task_name  = (
+        f"MINDERReminder_{target_dt.strftime('%Y%m%d_%H%M%S')}_" 
+        f"{secrets.token_hex(4)}"
+    )
 
     try:
         script_path = _write_notify_script(task_name, safe_msg, os_name)
