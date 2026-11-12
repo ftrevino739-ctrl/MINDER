@@ -9,7 +9,7 @@ import platform
 from pathlib import Path
 from datetime import datetime
 
-from core import outcome
+from core import confirm, outcome
 
 # pyautogui is gone from this file along with the generated-code sandbox that
 # was the only thing using it — see the note below. Nothing here drives the
@@ -305,47 +305,192 @@ _SKIP_EXTENSIONS = {
 }
 
 
-def organize_desktop(mode: str = "by_type") -> str:
-    desktop       = _get_desktop()
-    skip_exts     = _SKIP_EXTENSIONS.get(_OS, set())
-    moved, skipped = [], []
+def _desktop_move_plan(action: str, mode: str = "by_type",
+                       archive_name: str = "") -> tuple[Path, list[dict], list[str]]:
+    """Build a stable, non-mutating preview of desktop file moves."""
+    desktop = _get_desktop()
+    if not desktop.exists() or not desktop.is_dir():
+        raise OSError(f"Desktop folder does not exist: {desktop}")
+    skip_exts = _SKIP_EXTENSIONS.get(_OS, set())
+    entries: list[dict] = []
+    skipped: list[str] = []
 
-    for item in desktop.iterdir():
-        if item.is_dir() or item.name.startswith("."):
+    if action == "clean":
+        folder_for_all = archive_name or f"Desktop Archive {datetime.now():%Y-%m-%d}"
+    else:
+        folder_for_all = ""
+
+    for item in sorted(desktop.iterdir(), key=lambda path: path.name.casefold()):
+        if item.name.startswith(".") or item.is_dir() or not item.is_file():
             continue
         if item.suffix.lower() in skip_exts:
+            skipped.append(item.name)
             continue
+        if item.is_symlink():
+            try:
+                if not item.resolve().is_relative_to(Path.home().resolve()):
+                    skipped.append(item.name)
+                    continue
+            except Exception:
+                skipped.append(item.name)
+                continue
 
-        if mode == "by_date":
-            mtime       = datetime.fromtimestamp(item.stat().st_mtime)
-            folder_name = mtime.strftime("%Y-%m")
+        if action == "clean":
+            folder_name = folder_for_all
+        elif mode == "by_date":
+            folder_name = datetime.fromtimestamp(item.stat().st_mtime).strftime("%Y-%m")
         else:
-            ext         = item.suffix.lower()
             folder_name = "Others"
-            for folder, exts in FILE_TYPE_MAP.items():
-                if ext in exts:
+            for folder, extensions in FILE_TYPE_MAP.items():
+                if item.suffix.lower() in extensions:
                     folder_name = folder
                     break
 
-        target_dir = desktop / folder_name
-        target_dir.mkdir(exist_ok=True)
-        new_path = target_dir / item.name
-
-        if new_path.exists():
+        destination = desktop / folder_name / item.name
+        if destination.exists():
             skipped.append(item.name)
             continue
+        stat = item.stat()
+        entries.append({
+            "name": item.name,
+            "folder": folder_name,
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "mode": stat.st_mode,
+        })
 
-        shutil.move(str(item), str(new_path))
-        moved.append(f"{item.name} → {folder_name}/")
+    return desktop, entries, skipped
 
-    result = f"Desktop organized ({mode}): {len(moved)} files moved."
-    if moved:
-        result += "\n" + "\n".join(moved[:8])
-        if len(moved) > 8:
-            result += f"\n... and {len(moved) - 8} more."
+
+def _execute_desktop_move_plan(action: str, mode: str, archive_name: str,
+                               expected_plan: list[dict]) -> str:
+    """Revalidate the preview, then move through file_controller so every move is undoable."""
+    try:
+        desktop, current_plan, skipped = _desktop_move_plan(
+            action, mode, archive_name,
+        )
+    except Exception as exc:
+        return outcome.failed("desktop_control",
+                              f"the desktop could not be rescanned: {exc}")
+    if current_plan != expected_plan:
+        return outcome.failed(
+            "desktop_control",
+            "the desktop files changed while approval was pending; no files were moved",
+        )
+    if not current_plan:
+        return outcome.failed("desktop_control",
+                              "there are no remaining files to move")
+
+    from actions import file_controller
+
+    created_folders: set[str] = set()
+    moved: list[str] = []
+    failures: list[str] = []
+    for entry in current_plan:
+        folder = entry["folder"]
+        destination_dir = desktop / folder
+        if folder not in created_folders:
+            if not destination_dir.exists():
+                result = file_controller.create_folder(str(desktop), folder)
+                if not destination_dir.is_dir():
+                    failures.append(f"{folder}/: {result}")
+                    continue
+            created_folders.add(folder)
+
+        source = desktop / entry["name"]
+        target = destination_dir / entry["name"]
+        try:
+            current_stat = source.stat()
+            if (current_stat.st_size != entry["size"]
+                    or current_stat.st_mtime_ns != entry["mtime_ns"]
+                    or current_stat.st_mode != entry["mode"]):
+                failures.append(f"{entry['name']}: changed after review; skipped")
+                continue
+        except OSError as exc:
+            failures.append(f"{entry['name']}: source unavailable ({exc})")
+            continue
+
+        result = file_controller.move_file(
+            str(desktop), entry["name"], str(destination_dir),
+        )
+        if result.startswith("Moved:") and target.exists() and not source.exists():
+            moved.append(entry["name"])
+        else:
+            failures.append(f"{entry['name']}: {result}")
+
+    if failures:
+        return outcome.unverified(
+            "desktop_control",
+            f"{len(moved)} file(s) moved and {len(failures)} not moved. "
+            "Successful moves were registered in the undo history.",
+            moved=len(moved),
+            failed=len(failures),
+            skipped=len(skipped),
+        )
+    return outcome.done(
+        "desktop_control",
+        moved=len(moved),
+        skipped=len(skipped),
+        verified=True,
+    )
+
+
+def _request_desktop_moves(action: str, mode: str = "by_type") -> str:
+    """Preview and approve a batch of desktop moves before touching user files."""
+    archive_name = (
+        f"Desktop Archive {datetime.now():%Y-%m-%d}"
+        if action == "clean" else ""
+    )
+    try:
+        desktop, plan, skipped = _desktop_move_plan(action, mode, archive_name)
+    except Exception as exc:
+        return outcome.failed("desktop_control",
+                              f"the desktop could not be scanned: {exc}")
+    if not plan:
+        label = "organized" if action == "organize" else "archived"
+        extra = f" {len(skipped)} shortcut/special file(s) were skipped." if skipped else ""
+        return f"No eligible desktop files to move; nothing was {label}.{extra}"
+
+    action_word = "organize" if action == "organize" else "archive"
+    lines = [
+        f"Desktop folder: {desktop}",
+        f"Operation: {action_word}",
+        f"Files to move: {len(plan)}",
+        "",
+    ]
+    lines.extend(
+        f"{entry['name']}  →  {entry['folder']}/"
+        for entry in plan
+    )
     if skipped:
-        result += f"\n{len(skipped)} file(s) skipped (name conflict)."
-    return result
+        lines.extend(["", f"Skipped: {len(skipped)} file(s) with protected types or name conflicts."])
+    detail = "\n".join(lines)
+    if len(detail) > confirm.MAX_DETAIL_CHARS:
+        return outcome.failed(
+            "desktop_control",
+            "the file list is too large to display in full for safe approval; "
+            "no files were moved",
+            files=len(plan),
+        )
+
+    title = (
+        f"Approve organizing {len(plan)} desktop files"
+        if action == "organize"
+        else f"Approve archiving {len(plan)} desktop files"
+    )
+    return confirm.request(
+        key=f"desktop-move:{action}",
+        title=title,
+        detail=detail,
+        run=lambda: _execute_desktop_move_plan(
+            action, mode, archive_name, plan,
+        ),
+    )
+
+
+def organize_desktop(mode: str = "by_type") -> str:
+    normalized_mode = "by_date" if str(mode).strip().lower() == "by_date" else "by_type"
+    return _request_desktop_moves("organize", normalized_mode)
 
 
 def list_desktop() -> str:
@@ -374,24 +519,7 @@ def list_desktop() -> str:
 
 
 def clean_desktop() -> str:
-    desktop     = _get_desktop()
-    skip_exts   = _SKIP_EXTENSIONS.get(_OS, set())
-    today       = datetime.now().strftime("%Y-%m-%d")
-    archive_dir = desktop / f"Desktop Archive {today}"
-    archive_dir.mkdir(exist_ok=True)
-
-    moved = 0
-    for item in desktop.iterdir():
-        if item.is_dir() or item.name.startswith("."):
-            continue
-        if item.suffix.lower() in skip_exts:
-            continue
-        new_path = archive_dir / item.name
-        if not new_path.exists():
-            shutil.move(str(item), str(new_path))
-            moved += 1
-
-    return f"Desktop cleaned: {moved} files archived to '{archive_dir.name}'."
+    return _request_desktop_moves("clean")
 
 
 def get_desktop_stats() -> str:
@@ -478,7 +606,8 @@ TOOL = {
         "Controls the DESKTOP itself: the wallpaper, and tidying the files on "
         "it. Actions: wallpaper (needs 'path') | wallpaper_url (needs 'url') | "
         "current_wallpaper | organize (needs 'mode': by_type or by_date) | "
-        "clean | list | stats. "
+        "clean | list | stats. Organize and clean show the exact file move list "
+        "and require approval; each successful move is registered for undo. "
         "It does ONLY those. For typing, clicking, hotkeys, screenshots or "
         "closing an application use computer_control; for opening one use "
         "open_app; for reading, moving or deleting files use file_controller. "
@@ -492,7 +621,7 @@ TOOL = {
     "brief": (
         "Desktop wallpaper and desktop-file tidying. Actions: wallpaper "
         "(path) | wallpaper_url (url) | current_wallpaper | organize (mode) | "
-        "clean | list | stats. Nothing else - typing and clicking are "
+        "clean | list | stats. Organize/clean require approval. Nothing else - typing and clicking are "
         "computer_control."
     ),
     "parameters": {
