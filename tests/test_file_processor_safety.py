@@ -118,6 +118,39 @@ class FileProcessorSafetyTests(unittest.TestCase):
             self.assertIn("must be empty", result)
             self.assertEqual((existing / "keep.txt").read_text(encoding="utf-8"), "keep")
 
+    def test_archive_bytes_changed_after_review_are_not_extracted(self):
+        with self._home_temp() as folder:
+            root = Path(folder)
+            archive_path = root / "bundle.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("draft.txt", "old-data")
+            dest = root / "unpacked"
+            captured = {}
+            with patch.object(
+                module.confirm, "request",
+                side_effect=lambda **kwargs: captured.update(kwargs) or "[CONFIRMATION_PENDING]",
+            ):
+                result = module._process_archive(
+                    archive_path, "extract", {"destination": str(dest)}
+                )
+            self.assertIn("[CONFIRMATION_PENDING]", result)
+
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("draft.txt", "new-data")
+            refused = captured["run"]()
+            self.assertIn("archive bytes changed while extraction approval was pending", refused)
+            self.assertFalse(dest.exists())
+
+    def test_windows_reserved_and_invalid_archive_names_are_rejected(self):
+        with self._home_temp() as folder:
+            root = Path(folder)
+            archive_path = root / "bad.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("CON.txt", "reserved")
+            entries, error = module._archive_plan(archive_path)
+            self.assertEqual(entries, [])
+            self.assertIn("unsafe archive path", error)
+
     def test_tar_symlink_entries_are_rejected(self):
         with self._home_temp() as folder:
             root = Path(folder)
