@@ -12,7 +12,9 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import quote_plus
 
+from actions._browser_safety import normalize_browser_url
 from core import appidentity, outcome
 
 # Importing playwright cost 198 ms at every launch, paid by action discovery
@@ -84,20 +86,8 @@ def _load_playwright() -> None:
 _OS = platform.system()   # "Windows" | "Darwin" | "Linux"
 
 def _normalize_url(url: str) -> str:
-    """
-    Bare words like "instagram" → "https://instagram.com"
-    Domains like "instagram.com" → "https://instagram.com"
-    Full URLs pass through unchanged.
-    """
-    url = url.strip()
-    if not url:
-        return "about:blank"
-    if "://" in url:
-        return url
-    # No dot at all → assume .com  (e.g. "instagram" → "instagram.com")
-    if "." not in url:
-        url = url + ".com"
-    return "https://" + url
+    """Normalize a browser address and reject non-web URI schemes."""
+    return normalize_browser_url(url)
 
 
 def _user_agent() -> str:
@@ -1127,12 +1117,16 @@ def browser_control(
         if action == "search":
             base    = _SEARCH_ENGINES.get(params.get("engine", "google").lower(),
                                           _SEARCH_ENGINES["google"])
-            nav_url = base + params.get("query", "").replace(" ", "+")
+            nav_url = base + quote_plus(params.get("query", ""))
         else:
             nav_url = params.get("url", "").strip()
 
-        result = _open_native(nav_url, browser)
-        if result.startswith("Opened") and nav_url:
+        try:
+            nav_url = _normalize_url(nav_url)
+            result = _open_native(nav_url, browser)
+        except ValueError as exc:
+            result = outcome.failed("browser_control", str(exc), url=nav_url)
+        if result.startswith("Opened") and nav_url and nav_url != "about:blank":
             _registry.note_native_url(_normalize_url(nav_url))
         _log(player, result)
         return result
