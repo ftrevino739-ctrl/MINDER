@@ -234,7 +234,7 @@ def _execute_project_command(command: list[str], project_dir: Path,
         if result.returncode == 0:
             return outcome.done(
                 "dev_agent",
-                "the approved project command completed with exit code 0",
+                result="the approved project command completed with exit code 0",
                 exit_code=0,
                 output=output,
                 verified=True,

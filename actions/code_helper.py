@@ -329,7 +329,7 @@ def _execute_code_file(command: list[str], cwd: Path, timeout: int) -> str:
         if result.returncode == 0:
             return outcome.done(
                 "code_helper",
-                "the approved file completed with exit code 0",
+                result="the approved file completed with exit code 0",
                 verified=True,
                 exit_code=0,
                 output=summary,
