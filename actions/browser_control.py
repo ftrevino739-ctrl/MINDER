@@ -794,7 +794,7 @@ class _BrowserSession:
 
     async def search(self, query: str, engine: str = "google") -> str:
         base = _SEARCH_ENGINES.get(engine.lower(), _SEARCH_ENGINES["google"])
-        return await self.go_to(base + query.replace(" ", "+"))
+        return await self.go_to(base + quote_plus(query))
 
     async def _control_details(self, locator) -> dict:
         return await locator.evaluate("""el => {
