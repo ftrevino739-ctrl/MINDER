@@ -1023,6 +1023,13 @@ class _BrowserSession:
             if clear_first and expected_snapshot.get("hasValue"):
                 await locator.clear()
             await locator.type(text, delay=50)
+            if not clear_first and expected_snapshot.get("hasValue"):
+                return outcome.unverified(
+                    "browser_control",
+                    "text was inserted without clearing the existing field contents; "
+                    "the exact final caret position was not independently verified",
+                    target=target,
+                )
             matches = await locator.evaluate("""(el, expected) => {
                 const value = el.isContentEditable
                     ? el.innerText

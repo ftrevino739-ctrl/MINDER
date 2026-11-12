@@ -183,7 +183,7 @@ class BrowserFieldReplacementTests(unittest.TestCase):
                 session.type_text("#message", "-suffix", clear_first=False)
             )
 
-        self.assertIn("status=done", result)
+        self.assertIn("status=unverified", result)
         request.assert_not_called()
         field.clear.assert_not_awaited()
         self.assertEqual(field.raw_value, "prefix-suffix")

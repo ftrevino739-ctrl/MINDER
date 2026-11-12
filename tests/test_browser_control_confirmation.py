@@ -210,7 +210,9 @@ class BrowserConfirmationTests(unittest.TestCase):
         context = {
             "hasForm": False,
             "isEditable": False,
+            "isSearch": True,
             "formLabel": "Search",
+            "activeControl": "weather",
             "submitters": [],
             "fields": ["Search: weather"],
         }
