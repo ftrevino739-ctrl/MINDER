@@ -96,15 +96,30 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
         return (f"I cannot confirm '{title}' right now because the interface is "
                 f"not available, so I have not done it.")
 
+    pending = _Pending(key=key, title=title, detail=detail,
+                        run=run, at=time.monotonic())
     with _lock:
-        _pending = _Pending(key=key, title=title, detail=detail,
-                            run=run, at=time.monotonic())
+        # The caller's pending_title() check is helpful for a friendly message,
+        # but it is not atomic with request(). Multiple action workers can reach
+        # this function at once; never let a later request replace the first
+        # human decision already waiting on the HUD.
+        if (_pending is not None
+                and time.monotonic() - _pending.at <= TIMEOUT_SECONDS):
+            return (
+                f"[CONFIRMATION_BLOCKED] Another operation is already awaiting "
+                f"human confirmation for '{_pending.title}'. No new operation "
+                f"was queued or executed."
+            )
+        _pending = pending
 
     try:
         _show_cb(title, detail)
     except Exception as e:
         with _lock:
-            _pending = None
+            # Clear only the request whose HUD callback failed. A concurrent
+            # resolve/new request must never be erased by this older failure.
+            if _pending is pending:
+                _pending = None
         return f"Could not ask for confirmation: {e}. Nothing was done."
 
     _log(f"SYS: Awaiting confirmation — {title}")
