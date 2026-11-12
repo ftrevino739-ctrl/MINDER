@@ -59,6 +59,30 @@ class GameUpdaterSafetyTests(unittest.TestCase):
         self.assertIn("without asking again", captured["detail"])
         execute.assert_not_called()
 
+    def test_install_epic_is_rejected_until_epic_install_is_supported(self):
+        with patch.object(game_module.confirm, "request") as request:
+            result = game_module.game_updater({
+                "action": "install", "platform": "epic", "game_name": "Example Game",
+            })
+        self.assertIn("only through Steam", result)
+        request.assert_not_called()
+
+    def test_schedule_must_match_the_current_both_platforms_task(self):
+        with patch.object(game_module.confirm, "request") as request:
+            result = game_module.game_updater({
+                "action": "schedule", "platform": "steam", "hour": 3, "minute": 0,
+            })
+        self.assertIn("updates both Steam and Epic", result)
+        request.assert_not_called()
+
+    def test_install_requires_a_game_name(self):
+        with patch.object(game_module.confirm, "request") as request:
+            result = game_module.game_updater({
+                "action": "install", "platform": "steam", "app_id": "730",
+            })
+        self.assertIn("game name is required", result)
+        request.assert_not_called()
+
     def test_read_only_action_does_not_require_approval(self):
         with (
             patch.object(game_module.confirm, "request") as request,
