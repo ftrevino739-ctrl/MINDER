@@ -29,23 +29,28 @@ class FileProcessorOutputSafetyTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "new output")
 
     def test_image_save_refuses_existing_output(self):
-        from PIL import Image
+        class FakeImage:
+            def save(self, handle, format):
+                handle.write(b"generated image bytes")
+
         with self._home_temp() as folder:
             path = Path(folder) / "image.png"
             path.write_bytes(b"user image")
-            result = module._save_pil_image(Image.new("RGB", (1, 1)), path, "PNG")
+            result = module._save_pil_image(FakeImage(), path, "PNG")
             self.assertIn("status=failed", result)
             self.assertEqual(path.read_bytes(), b"user image")
 
     def test_image_save_creates_new_output(self):
-        from PIL import Image
+        class FakeImage:
+            def save(self, handle, format):
+                self.assertEqual(format, "PNG")
+                handle.write(b"generated image bytes")
+
         with self._home_temp() as folder:
             path = Path(folder) / "image.png"
-            result = module._save_pil_image(Image.new("RGB", (1, 1)), path, "PNG")
+            result = module._save_pil_image(FakeImage(), path, "PNG")
             self.assertEqual(result, f"Saved to: {path}")
-            self.assertTrue(path.is_file())
-            with Image.open(path) as image:
-                self.assertEqual(image.size, (1, 1))
+            self.assertEqual(path.read_bytes(), b"generated image bytes")
 
     def test_ffmpeg_runner_inserts_no_overwrite_flag_and_checks_shell_false(self):
         with patch.object(module.subprocess, "run") as run:
