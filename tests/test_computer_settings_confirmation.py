@@ -163,14 +163,10 @@ class IrreversibleSettingsConfirmationTests(unittest.TestCase):
             type_text.assert_called_once_with("Send this to Alex", press_enter_after=True)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class XRandRTests(unittest.TestCase):
     def test_xrandr_brightness_uses_argument_vector_without_shell(self):
         class Completed:
-            stdout = "eDP-1 connected primary 1920x1080+0+0\\n    Brightness: 0.7\\n"
+            stdout = "eDP-1 connected primary 1920x1080+0+0\n    Brightness: 0.7\n"
             returncode = 0
 
         with patch.object(settings.subprocess, "run", return_value=Completed()) as run:
@@ -183,3 +179,7 @@ class XRandRTests(unittest.TestCase):
             errors="replace", timeout=5,
         )
         self.assertTrue(all("shell" not in call.kwargs for call in run.call_args_list))
+
+
+if __name__ == "__main__":
+    unittest.main()
