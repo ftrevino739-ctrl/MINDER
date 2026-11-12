@@ -4,6 +4,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +46,8 @@ def _sanitise(text: str, max_len: int = 200) -> str:
     )[:max_len]
 
 def _write_notify_script(task_name: str, message: str, os_name: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", task_name):
+        raise ValueError("Invalid reminder task name.")
     script_path = _scripts_dir() / f"{task_name}.py"
     msg_literal = json.dumps(message)  
 
@@ -62,7 +66,7 @@ except Exception:
 if not notified:
     try:
         from win10toast import ToastNotifier
-        ToastNotifier().show_toast("J.A.R.V.I.S Reminder", message, duration=15, threaded=False)
+        ToastNotifier().show_toast("MINDER Reminder", message, duration=15, threaded=False)
         notified = True
     except Exception:
         pass
@@ -139,7 +143,9 @@ try:
 except Exception:
     pass
 """
-    script_path.write_text(script_body, encoding="utf-8")
+    # Exclusive creation prevents an existing reminder from being replaced.
+    with script_path.open("x", encoding="utf-8") as handle:
+        handle.write(script_body)
     script_path.chmod(0o600)   # owner read/write only
     return script_path
 
@@ -233,8 +239,9 @@ def _schedule_mac(target_dt: datetime, task_name: str,
 </dict>
 </plist>
 """
-    plist_path.write_text(plist_content, encoding="utf-8")
-    plist_path.chmod(0o644)
+    with plist_path.open("x", encoding="utf-8") as handle:
+        handle.write(plist_content)
+    plist_path.chmod(0o600)
 
     result = subprocess.run(
         ["launchctl", "load", str(plist_path)],
@@ -332,6 +339,10 @@ def reminder(
         return "Something went wrong while scheduling the reminder."
 
     if not job_id:
+        try:
+            script_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return "I couldn't register the reminder with the system scheduler."
 
     if player:
