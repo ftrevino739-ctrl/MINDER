@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote_plus
 
-from actions._browser_safety import normalize_browser_url
-from core import appidentity, outcome
+from actions._browser_safety import normalize_browser_url, requires_human_approval
+from core import appidentity, confirm, outcome
 
 # Importing playwright cost 198 ms at every launch, paid by action discovery
 # whether or not a browser was ever opened. It is the second-largest import in
@@ -796,15 +796,122 @@ class _BrowserSession:
         base = _SEARCH_ENGINES.get(engine.lower(), _SEARCH_ENGINES["google"])
         return await self.go_to(base + query.replace(" ", "+"))
 
+    async def _control_details(self, locator) -> dict:
+        return await locator.evaluate("""el => {
+            const form = el.form || el.closest('form');
+            const fields = form ? [...form.querySelectorAll(
+                'input, textarea, select, [contenteditable="true"]'
+            )].map(field => {
+                const type = (field.getAttribute('type') || '').toLowerCase();
+                if (['password', 'hidden', 'file'].includes(type)) return null;
+                const label = field.getAttribute('aria-label')
+                    || field.getAttribute('placeholder')
+                    || field.labels?.[0]?.innerText
+                    || field.getAttribute('name')
+                    || field.tagName.toLowerCase();
+                const value = field.isContentEditable
+                    ? field.innerText : (field.value || '');
+                return value ? label + ': ' + String(value).slice(0, 2000) : null;
+            }).filter(Boolean) : [];
+            return {
+                label: (el.getAttribute('aria-label') || el.innerText
+                    || el.value || el.getAttribute('title') || '').trim(),
+                formLabel: form ? (form.getAttribute('aria-label')
+                    || form.getAttribute('name') || '') : '',
+                fields
+            };
+        }""")
+
+    def _request_browser_approval(self, title: str, detail: str, run) -> str:
+        pending = confirm.pending_title()
+        if pending:
+            return outcome.ask(
+                "browser_control",
+                "There is already a confirmation waiting on screen. "
+                "The user must answer it before another browser action can be approved.",
+                pending=pending,
+            )
+        if len(detail) > confirm.MAX_DETAIL_CHARS:
+            return outcome.failed(
+                "browser_control",
+                "the browser action is too long to display in full for safe approval",
+            )
+        return confirm.request(
+            key="browser-action",
+            title=title,
+            detail=detail,
+            run=run,
+        )
+
+    async def _confirmed_click(self, page, locator, expected_url: str,
+                               expected_details: dict) -> str:
+        try:
+            if page.is_closed() or page.url != expected_url:
+                return outcome.failed(
+                    "browser_control",
+                    "the page changed while approval was pending; nothing was clicked",
+                )
+            if await locator.count() == 0:
+                return outcome.failed(
+                    "browser_control",
+                    "the approved control is no longer available; nothing was clicked",
+                )
+            current = await self._control_details(locator)
+            if current != expected_details:
+                return outcome.failed(
+                    "browser_control",
+                    "the control or its form contents changed while approval was pending; "
+                    "nothing was clicked",
+                )
+            await locator.click(timeout=8_000)
+            return outcome.unverified(
+                "browser_control",
+                "the approved browser control was clicked, but the website's final "
+                "result was not independently verified",
+                url=expected_url,
+                control=expected_details.get("label", ""),
+            )
+        except Exception as exc:
+            return outcome.failed("browser_control",
+                                  f"approved browser click failed: {exc}")
+
+    async def _click_locator(self, page, locator, description: str) -> str:
+        details = await self._control_details(locator)
+        label = (details.get("label") or "").strip()
+        form_label = (details.get("formLabel") or "").strip()
+        if not requires_human_approval(label, form_label, description):
+            await locator.click(timeout=8_000)
+            return f"Clicked: {label or description or 'element'}"
+
+        page_url = page.url
+        page_title = await page.title()
+        title = f"Approve browser action: {label or description}"
+        fields = details.get("fields") or []
+        detail = (
+            f"Website: {page_title}\n"
+            f"Address: {page_url}\n"
+            f"Control: {label or description}\n"
+            f"Form: {form_label or '(not labelled)'}\n\n"
+            "Visible form values for review:\n"
+            + ("\n".join(fields) if fields else "(no visible values)")
+            + "\n\nThe page, control and form values will be checked again before the click."
+        )
+        return self._request_browser_approval(
+            title, detail,
+            run=lambda: self.run(
+                self._confirmed_click(page, locator, page_url, details)
+            ),
+        )
+
     async def click(self, selector: str = None, text: str = None) -> str:
         page = await self._get_page()
         try:
             if text:
-                await page.get_by_text(text, exact=False).first.click(timeout=8_000)
-                return f"Clicked text: '{text}'"
+                locator = page.get_by_text(text, exact=False).first
+                return await self._click_locator(page, locator, text)
             if selector:
-                await page.click(selector, timeout=8_000)
-                return f"Clicked selector: {selector}"
+                locator = page.locator(selector).first
+                return await self._click_locator(page, locator, selector)
             return outcome.failed("browser_control",
                                   "no element was named to click")
         except PlaywrightTimeout:
@@ -838,9 +945,93 @@ class _BrowserSession:
         except Exception as e:
             return f"Scroll error: {e}"
 
+    async def _form_submission_context(self, page) -> dict:
+        return await page.evaluate("""() => {
+            const active = document.activeElement;
+            const form = active && (active.form || active.closest('form'));
+            if (!form) return {formLabel: '', submitters: [], fields: []};
+            const submitters = [...form.querySelectorAll(
+                'button, input[type="submit"], input[type="image"], [role="button"]'
+            )].map(el => (el.getAttribute('aria-label') || el.innerText
+                || el.value || el.getAttribute('title') || '').trim()).filter(Boolean);
+            const fields = [...form.querySelectorAll(
+                'input, textarea, select, [contenteditable="true"]'
+            )].map(field => {
+                const type = (field.getAttribute('type') || '').toLowerCase();
+                if (['password', 'hidden', 'file'].includes(type)) return null;
+                const label = field.getAttribute('aria-label')
+                    || field.getAttribute('placeholder')
+                    || field.labels?.[0]?.innerText
+                    || field.getAttribute('name')
+                    || field.tagName.toLowerCase();
+                const value = field.isContentEditable
+                    ? field.innerText : (field.value || '');
+                return value ? label + ': ' + String(value).slice(0, 2000) : null;
+            }).filter(Boolean);
+            return {
+                formLabel: form.getAttribute('aria-label')
+                    || form.getAttribute('name') || '',
+                submitters,
+                fields
+            };
+        }""")
+
+    async def _confirmed_press(self, page, key: str, expected_url: str,
+                               expected_context: dict) -> str:
+        try:
+            if page.is_closed() or page.url != expected_url:
+                return outcome.failed(
+                    "browser_control",
+                    "the page changed while approval was pending; the key was not pressed",
+                )
+            current = await self._form_submission_context(page)
+            if current != expected_context:
+                return outcome.failed(
+                    "browser_control",
+                    "the form changed while approval was pending; the key was not pressed",
+                )
+            await page.keyboard.press(key)
+            return outcome.unverified(
+                "browser_control",
+                "the approved submit key was pressed, but the website's final result "
+                "was not independently verified",
+                url=expected_url,
+            )
+        except Exception as exc:
+            return outcome.failed("browser_control",
+                                  f"approved browser key press failed: {exc}")
+
     async def press(self, key: str) -> str:
         page = await self._get_page()
         try:
+            if key.strip().lower() in {"enter", "numpadenter"}:
+                context = await self._form_submission_context(page)
+                submitter_text = " ".join(
+                    [context.get("formLabel", "")] + context.get("submitters", [])
+                )
+                if requires_human_approval(submitter_text):
+                    page_url = page.url
+                    page_title = await page.title()
+                    action_label = next(
+                        (label for label in context.get("submitters", [])
+                         if requires_human_approval(label)),
+                        context.get("formLabel") or "submit form",
+                    )
+                    detail = (
+                        f"Website: {page_title}\n"
+                        f"Address: {page_url}\n"
+                        f"Submission control: {action_label}\n\n"
+                        "Visible form values for review:\n"
+                        + ("\n".join(context.get("fields", []))
+                           if context.get("fields") else "(no visible values)")
+                        + "\n\nThe page and form will be checked again before submission."
+                    )
+                    return self._request_browser_approval(
+                        f"Approve browser submission: {action_label}", detail,
+                        run=lambda: self.run(
+                            self._confirmed_press(page, key, page_url, context)
+                        ),
+                    )
             await page.keyboard.press(key)
             return f"Pressed: {key}"
         except Exception as e:
@@ -877,21 +1068,21 @@ class _BrowserSession:
             try:
                 loc = page.get_by_role(role, name=description)
                 if await loc.count() > 0:
-                    await loc.first.click(timeout=5_000)
-                    return f"Clicked ({role}): '{description}'"
+                    return await self._click_locator(page, loc.first, description)
             except Exception:
                 pass
-        for attempt in (
-            lambda: page.get_by_text(description, exact=False).first.click(timeout=5_000),
-            lambda: page.get_by_placeholder(description, exact=False).first.click(timeout=5_000),
-            lambda: page.locator(
+        candidates = (
+            page.get_by_text(description, exact=False).first,
+            page.get_by_placeholder(description, exact=False).first,
+            page.locator(
                 f'[alt*="{description}" i],[title*="{description}" i],'
                 f'[aria-label*="{description}" i]'
-            ).first.click(timeout=5_000),
-        ):
+            ).first,
+        )
+        for locator in candidates:
             try:
-                await attempt()
-                return f"Clicked: '{description}'"
+                if await locator.count() > 0:
+                    return await self._click_locator(page, locator, description)
             except Exception:
                 pass
         return f"Could not find element: '{description}'"
@@ -1204,6 +1395,8 @@ TOOL = {
     "description": (
         "Controls the web browser: open an address, search, click, type, "
         "scroll, read the page, manage tabs, go back and forward. "
+        "High-impact submit/send/publish/purchase/delete controls, including "
+        "form submissions by Enter, require human approval on the HUD. "
         "THIS TOOL OPENS THE BROWSER ITSELF. Never call open_app for the "
         "browser first - doing both launches it twice, the second copy on a "
         "different profile with none of the user's sign-ins. 'Open Chrome and "
