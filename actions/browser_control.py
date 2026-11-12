@@ -740,45 +740,77 @@ class _BrowserSession:
             await asyncio.sleep(0.2)
         return self._page
 
-    async def go_to(self, url: str) -> str:
+    async def _page_dirty_snapshot(self, page) -> list[dict]:
+        """Return user-edited form fields, redacting password values."""
+        return await page.evaluate("""() => {
+            const nodes = [...document.querySelectorAll(
+                'input:not([type="hidden"]), textarea, select, '
+                + '[contenteditable="true"], [role="textbox"]'
+            )];
+            const dirty = [];
+            for (const el of nodes) {
+                const type = (el.getAttribute('type') || '').toLowerCase();
+                if (['hidden', 'file', 'button', 'submit', 'reset'].includes(type)) continue;
+                const password = type === 'password';
+                const tag = el.tagName.toLowerCase();
+                const value = el.isContentEditable
+                    ? String(el.innerText || '')
+                    : (('value' in el) ? String(el.value || '') : String(el.textContent || ''));
+                let changed = false;
+                if (el.isContentEditable || el.getAttribute('role') === 'textbox') {
+                    changed = value.length > 0;
+                } else if (tag === 'select') {
+                    changed = [...el.options].some(option =>
+                        Boolean(option.selected) !== Boolean(option.defaultSelected)
+                    );
+                } else if (type === 'checkbox' || type === 'radio') {
+                    changed = Boolean(el.checked) !== Boolean(el.defaultChecked);
+                } else {
+                    changed = value !== String(el.defaultValue || '');
+                }
+                if (!changed) continue;
+                const label = el.getAttribute('aria-label')
+                    || el.getAttribute('placeholder')
+                    || el.labels?.[0]?.innerText
+                    || el.getAttribute('name')
+                    || el.id
+                    || tag;
+                dirty.push({
+                    label: String(label).trim(),
+                    type: type || tag,
+                    password,
+                    length: value.length,
+                    value: password ? null : value,
+                    id: el.id || '',
+                    name: el.getAttribute('name') || ''
+                });
+            }
+            return dirty;
+        }""")
 
-        url      = _normalize_url(url)
-        page     = await self._get_page()
-        prev_url = page.url
-
+    async def _navigate_page(self, page, url: str, previous_url: str) -> str:
         async def _do_goto(p: Page) -> str:
             """Attempt navigation and return the resulting URL (may still be blank)."""
             try:
                 await p.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 await asyncio.sleep(0.3)
             except PlaywrightTimeout:
-                pass   # page may have partially loaded — check URL below
-            except Exception as e:
-                print(f"[Browser] goto exception (non-fatal): {e}")
+                pass
+            except Exception as exc:
+                print(f"[Browser] goto exception (non-fatal): {exc}")
             return p.url
 
         result_url = await _do_goto(page)
-
-        if result_url in ("about:blank", "", None, prev_url) and prev_url in ("about:blank", "", None):
+        if result_url in ("about:blank", "", None, previous_url) and previous_url in ("about:blank", "", None):
             print(f"[Browser] Still blank after goto — retrying on new tab: {url}")
             try:
-                new_page   = await self._context.new_page()
+                new_page = await self._context.new_page()
                 self._page = new_page
                 result_url = await _do_goto(new_page)
-            except Exception as e:
-                print(f"[Browser] New-tab retry failed: {e}")
+            except Exception as exc:
+                print(f"[Browser] New-tab retry failed: {exc}")
 
         if result_url and result_url not in ("about:blank", "", None):
-            # Verified, and cheaply: this is the page's OWN url read back after
-            # navigation, not the one we asked for. A redirect, a login wall or
-            # a captive portal all show up here as a different address, which
-            # is exactly what the user needs to hear about.
-            #
-            # The profile is reported for the same reason. When the user's
-            # browser was already running its profile is locked, so the page
-            # opens in a separate one where they are signed in to nothing —
-            # and a Gmail that asks them to log in looks like a broken
-            # assistant unless somebody says why.
             if self.profile_kind == "separate":
                 return outcome.unverified(
                     "browser_control",
@@ -789,13 +821,75 @@ class _BrowserSession:
                     f"{self.browser_name} first would let their own profile be "
                     f"used",
                     opened=result_url, profile="separate")
-            return outcome.done("browser_control", opened=result_url,
-                                profile=self.profile_kind or "real",
-                                verified=True)
+            return outcome.done(
+                "browser_control", opened=result_url,
+                profile=self.profile_kind or "real", verified=True,
+            )
         return outcome.failed(
             "browser_control",
             "the page stayed blank - the address may be wrong, or the site may "
             "not have answered", url=url)
+
+    async def _navigate_after_approval(self, page, expected_url: str,
+                                       expected_dirty: list[dict],
+                                       target_url: str) -> str:
+        try:
+            if page.is_closed() or page.url != expected_url:
+                return outcome.failed(
+                    "browser_control",
+                    "the current page changed while approval was pending; navigation was not started",
+                )
+            current_dirty = await self._page_dirty_snapshot(page)
+            if current_dirty != expected_dirty:
+                return outcome.failed(
+                    "browser_control",
+                    "the form or draft changed while approval was pending; navigation was not started",
+                )
+            return await self._navigate_page(page, target_url, expected_url)
+        except Exception as exc:
+            return outcome.failed(
+                "browser_control", f"approved browser navigation failed: {exc}",
+            )
+
+    async def go_to(self, url: str) -> str:
+        url = _normalize_url(url)
+        page = await self._get_page()
+        previous_url = page.url
+
+        if previous_url not in ("about:blank", "", None) and previous_url != url:
+            dirty = await self._page_dirty_snapshot(page)
+            if dirty:
+                lines = []
+                for field in dirty:
+                    value = (
+                        f"[password value hidden; {field['length']} characters]"
+                        if field.get("password")
+                        else (field.get("value") or "[empty]")
+                    )
+                    lines.append(
+                        f"Field: {field.get('label') or field.get('name') or 'unnamed'} "
+                        f"({field.get('type')})\nCurrent unsaved value:\n{value}"
+                    )
+                detail = (
+                    f"Current page: {await page.title()}\n"
+                    f"Address: {previous_url}\n"
+                    f"Destination: {url}\n\n"
+                    "Unsaved or edited fields detected:\n"
+                    + "\n\n".join(lines)
+                    + "\n\nNavigating away may discard this content. The page and "
+                    "field values will be checked again before navigation."
+                )
+                return self._request_browser_approval(
+                    f"Approve leaving page with unsaved content",
+                    detail,
+                    run=lambda: self.run(
+                        self._navigate_after_approval(
+                            page, previous_url, dirty, url,
+                        )
+                    ),
+                )
+
+        return await self._navigate_page(page, url, previous_url)
 
     async def search(self, query: str, engine: str = "google") -> str:
         base = _SEARCH_ENGINES.get(engine.lower(), _SEARCH_ENGINES["google"])
