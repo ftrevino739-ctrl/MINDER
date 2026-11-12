@@ -83,6 +83,15 @@ class GameUpdaterSafetyTests(unittest.TestCase):
         self.assertIn("game name is required", result)
         request.assert_not_called()
 
+    def test_shutdown_with_combined_platform_updates_is_rejected(self):
+        with patch.object(game_module.confirm, "request") as request:
+            result = game_module.game_updater({
+                "action": "update", "platform": "both",
+                "shutdown_when_done": True,
+            })
+        self.assertIn("Steam-only downloads", result)
+        request.assert_not_called()
+
     def test_read_only_action_does_not_require_approval(self):
         with (
             patch.object(game_module.confirm, "request") as request,

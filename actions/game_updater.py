@@ -696,10 +696,10 @@ def _game_updater_execute(parameters: dict, player=None, speak=None) -> str:
             "game_updater",
             "the current daily scheduled task updates both Steam and Epic; choose platform=both",
         )
-    if shutdown and platform == "epic":
+    if shutdown and platform != "steam":
         return outcome.failed(
             "game_updater",
-            "automatic shutdown is currently supported only for Steam downloads",
+            "automatic shutdown is supported only for Steam-only downloads; Epic and combined updates cannot be monitored safely",
         )
     params["action"] = action
     params["platform"] = platform
@@ -849,10 +849,10 @@ def game_updater(parameters: dict, player=None, speak=None) -> str:
             "game_updater",
             "the current daily scheduled task updates both Steam and Epic; choose platform=both",
         )
-    if shutdown and platform == "epic":
+    if shutdown and platform != "steam":
         return outcome.failed(
             "game_updater",
-            "automatic shutdown is currently supported only for Steam downloads",
+            "automatic shutdown is supported only for Steam-only downloads; Epic and combined updates cannot be monitored safely",
         )
     if action in {"schedule", "cancel_schedule", "schedule_status"}:
         try:
