@@ -12,7 +12,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin, urlsplit
 
 from actions._browser_safety import (
     normalize_browser_url,
@@ -932,11 +932,23 @@ class _BrowserSession:
                     ? field.innerText : (field.value || '');
                 return value ? label + ': ' + String(value).slice(0, 2000) : null;
             }).filter(Boolean) : [];
+            const isSearchForm = Boolean(form && (
+                form.matches('[role="search"]')
+                || form.querySelector(
+                    'input[type="search"], input[name="q"], input[name="query"], '
+                    + 'input[name*="search" i]'
+                )
+                || /search|buscar/i.test(
+                    (form.id || '') + ' ' + (form.getAttribute('name') || '')
+                    + ' ' + (form.getAttribute('aria-label') || '')
+                )
+            ));
+            const isLink = control.matches('a[href]');
             return {
                 label: (control.getAttribute('aria-label') || control.innerText
                     || control.value || control.getAttribute('title') || '').trim(),
                 formLabel: form ? (form.getAttribute('aria-label')
-                    || form.getAttribute('name') || '') : '',
+                    || form.getAttribute('name') || form.id || '') : '',
                 identifiers: [
                     control.id,
                     control.getAttribute('name'),
@@ -952,6 +964,9 @@ class _BrowserSession:
                     'button:not([type]), button[type="submit"], '
                     + 'input[type="submit"], input[type="image"]'
                 )),
+                isNavigationLink: isLink,
+                href: isLink ? control.href : '',
+                isSearchForm,
                 fields
             };
         }""")
@@ -977,14 +992,24 @@ class _BrowserSession:
             run=run,
         )
 
-    async def _confirmed_click(self, page, locator, expected_url: str,
-                               expected_details: dict) -> str:
+    async def _confirmed_click(
+        self, page, locator, expected_url: str, expected_details: dict,
+        expected_dirty: list[dict] | None = None,
+    ) -> str:
         try:
             if page.is_closed() or page.url != expected_url:
                 return outcome.failed(
                     "browser_control",
                     "the page changed while approval was pending; nothing was clicked",
                 )
+            if expected_dirty is not None:
+                current_dirty = await self._page_dirty_snapshot(page)
+                if current_dirty != expected_dirty:
+                    return outcome.failed(
+                        "browser_control",
+                        "unsaved form data changed while approval was pending; "
+                        "nothing was clicked",
+                    )
             if await locator.count() == 0:
                 return outcome.failed(
                     "browser_control",
@@ -1014,35 +1039,142 @@ class _BrowserSession:
         label = (details.get("label") or "").strip()
         form_label = (details.get("formLabel") or "").strip()
         identifiers = (details.get("identifiers") or "").strip()
-        requires_approval = (
+        href = (details.get("href") or "").strip()
+        is_navigation_link = bool(details.get("isNavigationLink"))
+
+        # An anchor is navigation, not a neutral text click. Refuse active or
+        # local URI schemes before Playwright has a chance to hand them to OS apps.
+        if is_navigation_link:
+            try:
+                destination = urljoin(page.url, href)
+                parsed_destination = urlsplit(destination)
+                if parsed_destination.scheme.lower() not in {"http", "https"}:
+                    raise ValueError("Only HTTP and HTTPS links are allowed.")
+            except Exception as exc:
+                return outcome.failed(
+                    "browser_control",
+                    f"blocked unsafe browser link: {exc}",
+                    href=href,
+                )
+
+            current = urlsplit(page.url)
+            same_document = (
+                parsed_destination.scheme.lower() == current.scheme.lower()
+                and parsed_destination.netloc.lower() == current.netloc.lower()
+                and parsed_destination.path == current.path
+                and parsed_destination.query == current.query
+            )
+            # Hash-only jumps do not discard the current document or its draft.
+            if not same_document:
+                dirty = await self._page_dirty_snapshot(page)
+                if dirty:
+                    page_url = page.url
+                    page_title = await page.title()
+                    visible = []
+                    for field in dirty:
+                        value = (
+                            f"[password value hidden; {field.get('length', 0)} characters]"
+                            if field.get("password")
+                            else (field.get("value") or "[empty]")
+                        )
+                        visible.append(
+                            f"Field: {field.get('label') or field.get('name') or 'unnamed'} "
+                            f"({field.get('type', 'field')})\nUnsaved value:\n{value}"
+                        )
+                    detail = (
+                        f"Website: {page_title}\nAddress: {page_url}\n"
+                        f"Destination: {destination}\n"
+                        f"Link: {label or description}\n"
+                        f"Identifiers: {identifiers or '(none)'}\n\n"
+                        "Unsaved or edited fields detected:\n"
+                        + "\n\n".join(visible)
+                        + "\n\nNavigation may discard this content. The page, link "
+                        "and draft will be checked again before clicking."
+                    )
+                    return self._request_browser_approval(
+                        f"Approve leaving page with unsaved content",
+                        detail,
+                        run=lambda: self.run(
+                            self._confirmed_click(
+                                page, locator, page_url, details, expected_dirty=dirty,
+                            )
+                        ),
+                    )
+
+        is_search_submit = bool(
             details.get("isSubmitControl")
-            or requires_human_approval(label, form_label, identifiers, description)
+            and (
+                details.get("isSearchForm")
+                or "search" in form_label.casefold()
+                or "buscar" in form_label.casefold()
+                or label.casefold() in {"search", "buscar"}
+            )
+        )
+        sensitive = requires_human_approval(
+            label, form_label, identifiers, description,
+        )
+        requires_approval = (
+            (details.get("isSubmitControl") and not is_search_submit)
+            or sensitive
             or (
                 details.get("isActionControl")
                 and requires_screen_click_approval(label or description)
             )
         )
+
+        # Even a normally safe navigation/menu button must protect edits on the
+        # current page. Search submitters are intentionally exempt.
+        dirty = None
+        if (
+            not is_search_submit
+            and details.get("isActionControl")
+            and not details.get("isSubmitControl")
+        ):
+            dirty = await self._page_dirty_snapshot(page)
+            if dirty:
+                requires_approval = True
+
         if not requires_approval:
             await locator.click(timeout=8_000)
             return f"Clicked: {label or description or 'element'}"
 
         page_url = page.url
         page_title = await page.title()
-        title = f"Approve browser action: {label or description}"
+        title = (
+            "Approve leaving page with unsaved content"
+            if dirty or (is_navigation_link and dirty is not None)
+            else f"Approve browser action: {label or description}"
+        )
         fields = details.get("fields") or []
         detail = (
             f"Website: {page_title}\n"
             f"Address: {page_url}\n"
-            f"Control: {label or description}\n"
-            f"Form: {form_label or '(not labelled)'}\n\n"
+            + (f"Destination: {href}\n" if is_navigation_link and href else "")
+            + f"Control: {label or description}\n"
+            + f"Form: {form_label or '(not labelled)'}\n\n"
             "Visible form values for review:\n"
             + ("\n".join(fields) if fields else "(no visible values)")
-            + "\n\nThe page, control and form values will be checked again before the click."
         )
+        if dirty:
+            dirty_lines = []
+            for field in dirty:
+                value = (
+                    f"[password value hidden; {field.get('length', 0)} characters]"
+                    if field.get("password")
+                    else (field.get("value") or "[empty]")
+                )
+                dirty_lines.append(
+                    f"Field: {field.get('label') or field.get('name') or 'unnamed'}: {value}"
+                )
+            detail += "\n\nUnsaved page data:\n" + "\n".join(dirty_lines)
+        detail += "\n\nThe page, control and form values will be checked again before the click."
+
         return self._request_browser_approval(
             title, detail,
             run=lambda: self.run(
-                self._confirmed_click(page, locator, page_url, details)
+                self._confirmed_click(
+                    page, locator, page_url, details, expected_dirty=dirty,
+                )
             ),
         )
 
