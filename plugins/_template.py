@@ -43,8 +43,8 @@ PLUGIN = {
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
     """
-    parameters: dict of the args Gemini extracted, matching PLUGIN['parameters'].
-    player: the JarvisUI instance — use player.write_log(f"MINDER: ...") to log,
+    parameters: dict of the args the selected LLM extracted, matching PLUGIN['parameters'].
+    player: the MINDER UI/HUD controller — use player.write_log(f"MINDER: ...") to log,
             same as actions/*.py. May be None.
     session_memory: reserved, usually None today (core tools mostly pass None too).
     Return a short natural-language string — this is spoken back to the user.

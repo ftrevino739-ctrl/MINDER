@@ -1,10 +1,11 @@
 """
 Plugin discovery, validation, collision detection, and dispatch.
 
-Discovery runs once (JarvisLive.__init__ calls discover_plugins()); the resulting
-PluginRegistry is cached for the process lifetime. Enable/disable state is re-read
-from config on every call to get_tool_declarations() / run() / list_for_ui(), so
-toggling a plugin does not require restarting the app or re-importing anything.
+Discovery runs once and parses literal PLUGIN metadata with the Python AST. It
+does not import or execute plugin modules. A plugin is OFF until the user enables
+the exact source hash in Plugin Manager. Its module is loaded only on first
+invocation after explicit approval, and only the bytes matching that hash execute.
+Enable/disable state is re-read from config for each tool declaration and dispatch.
 """
 from __future__ import annotations
 
@@ -63,12 +64,12 @@ class PluginRecord:
     behavior: Optional[str] = None    # None = the API's default (blocking)
     scheduling: Optional[str] = None  # None = the API's default (WHEN_IDLE)
     # Read by providers/schema.py when a small model gets a tool budget; never
-    # sent to any API — main.py strips both before the Gemini config is built.
+    # sent to any API — the tool-schema adapter strips both before provider requests.
     #   tier   "core" | "extra" — this file's own opinion of whether it should
     #          survive a tight budget, instead of that being decided by the
     #          order files happen to be discovered in.
     #   brief  a short description used in place of the long one when a budget
-    #          is in force. Nothing is deleted: Gemini still gets the full text.
+    #          is in force. Nothing is deleted: the selected provider still gets the full text.
     tier: Optional[str] = None
     brief: Optional[str] = None
     source_sha256: str = ""
