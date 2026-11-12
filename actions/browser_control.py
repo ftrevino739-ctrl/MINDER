@@ -955,19 +955,154 @@ class _BrowserSession:
         except Exception as e:
             return f"Click error: {e}"
 
+    async def _field_snapshot(self, locator) -> dict:
+        """Describe a writable field without revealing password contents."""
+        return await locator.evaluate("""el => {
+            const tag = el.tagName.toLowerCase();
+            const type = (el.getAttribute('type') || '').toLowerCase();
+            const password = type === 'password';
+            const editable = tag === 'textarea'
+                || el.isContentEditable
+                || el.getAttribute('role') === 'textbox'
+                || (tag === 'input' && ![
+                    'button', 'submit', 'reset', 'checkbox', 'radio',
+                    'file', 'hidden', 'image'
+                ].includes(type));
+            const raw = el.isContentEditable
+                ? el.innerText
+                : (('value' in el) ? el.value : el.textContent || '');
+            const value = String(raw || '');
+            let hash = 2166136261;
+            for (let i = 0; i < value.length; i++) {
+                hash ^= value.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            const label = el.getAttribute('aria-label')
+                || el.getAttribute('placeholder')
+                || el.labels?.[0]?.innerText
+                || el.getAttribute('name')
+                || el.id
+                || tag;
+            return {
+                editable,
+                tag,
+                type,
+                password,
+                hasValue: value.length > 0,
+                valueLength: value.length,
+                fingerprint: (hash >>> 0).toString(16),
+                value: password ? null : value,
+                label: String(label).trim(),
+                id: el.id || '',
+                name: el.getAttribute('name') || '',
+                placeholder: el.getAttribute('placeholder') || ''
+            };
+        }""")
+
+    async def _replace_field_after_approval(self, page, locator, expected_url: str,
+                                            expected_snapshot: dict, text: str,
+                                            target: str) -> str:
+        try:
+            if page.is_closed() or page.url != expected_url:
+                return outcome.failed(
+                    "browser_control",
+                    "the page changed while approval was pending; the field was not changed",
+                )
+            if await locator.count() == 0:
+                return outcome.failed(
+                    "browser_control",
+                    "the approved field is no longer available; nothing was typed",
+                )
+            current = await self._field_snapshot(locator)
+            if current != expected_snapshot:
+                return outcome.failed(
+                    "browser_control",
+                    "the field changed while approval was pending; nothing was typed",
+                    target=target,
+                )
+            if expected_snapshot.get("hasValue"):
+                await locator.clear()
+            await locator.type(text, delay=50)
+            matches = await locator.evaluate("""(el, expected) => {
+                const value = el.isContentEditable
+                    ? el.innerText
+                    : (('value' in el) ? el.value : el.textContent || '');
+                return String(value || '') === expected;
+            }""", text)
+            if not matches:
+                return outcome.unverified(
+                    "browser_control",
+                    "text was entered, but the field did not match the requested value",
+                    target=target,
+                )
+            return outcome.done(
+                "browser_control", typed=True, verified=True, target=target,
+            )
+        except Exception as exc:
+            return outcome.failed(
+                "browser_control", f"field input failed: {exc}", target=target,
+            )
+
+    async def _guarded_type(self, page, locator, text: str,
+                            clear_first: bool, target: str) -> str:
+        snapshot = await self._field_snapshot(locator)
+        if not snapshot.get("editable"):
+            return outcome.failed(
+                "browser_control",
+                "the selected element is not an editable text field",
+                target=target,
+            )
+        page_url = page.url
+        needs_review = bool(clear_first and snapshot.get("hasValue"))
+        if needs_review:
+            old_value = (
+                "[password value hidden]"
+                if snapshot.get("password")
+                else (snapshot.get("value") or "")
+            )
+            new_value = (
+                f"[password value hidden; {len(text)} characters]"
+                if snapshot.get("password")
+                else text
+            )
+            detail = (
+                f"Website: {await page.title()}\n"
+                f"Address: {page_url}\n"
+                f"Field: {snapshot.get('label') or target}\n"
+                f"Existing value ({snapshot.get('valueLength', 0)} characters):\n"
+                f"{old_value}\n\n"
+                f"Replacement value ({len(text)} characters):\n"
+                f"{new_value}\n\n"
+                "MINDER will replace the field only if the page and existing "
+                "contents are unchanged when you approve."
+            )
+            return self._request_browser_approval(
+                f"Approve replacing browser field: {snapshot.get('label') or target}",
+                detail,
+                run=lambda: self.run(
+                    self._replace_field_after_approval(
+                        page, locator, page_url, snapshot, text, target,
+                    )
+                ),
+            )
+
+        # Do not clear a field that was empty when inspected. Recheck it just
+        # before typing so a value entered in the meantime is never erased.
+        return await self._replace_field_after_approval(
+            page, locator, page_url, snapshot, text, target,
+        )
+
     async def type_text(self, selector: str = None, text: str = "",
                         clear_first: bool = True) -> str:
         page = await self._get_page()
         try:
-            el = page.locator(selector).first if selector else page.locator(":focus")
-            if clear_first:
-                await el.clear()
-            await el.type(text, delay=50)
-            # playwright raises when the field is not there, so reaching this
-            # line means the text went into a real input.
-            return outcome.done("browser_control", typed=True, verified=True)
-        except Exception as e:
-            return f"Type error: {e}"
+            locator = page.locator(selector).first if selector else page.locator(":focus")
+            target = selector or "currently focused field"
+            return await self._guarded_type(
+                page, locator, str(text), bool(clear_first), target,
+            )
+        except Exception as exc:
+            return f"Type error: {exc}"
 
     async def scroll(self, direction: str = "down", amount: int = 500) -> str:
         page = await self._get_page()
@@ -1131,18 +1266,132 @@ class _BrowserSession:
         page = await self._get_page()
         return page.url
 
+    async def _fill_form_after_approval(self, page, entries: list,
+                                        expected_url: str) -> str:
+        try:
+            if page.is_closed() or page.url != expected_url:
+                return outcome.failed(
+                    "browser_control",
+                    "the page changed while approval was pending; no form fields were changed",
+                )
+            # Validate every target before changing any of them. This prevents a
+            # stale or shifted selector from partially filling a different form.
+            for entry in entries:
+                locator = entry["locator"]
+                if await locator.count() == 0:
+                    return outcome.failed(
+                        "browser_control",
+                        f"field '{entry['selector']}' is no longer available; nothing was filled",
+                    )
+                current = await self._field_snapshot(locator)
+                if current != entry["snapshot"]:
+                    return outcome.failed(
+                        "browser_control",
+                        f"field '{entry['selector']}' changed while approval was pending; "
+                        "nothing was filled",
+                    )
+            completed = []
+            for entry in entries:
+                locator = entry["locator"]
+                if entry["snapshot"].get("hasValue"):
+                    await locator.clear()
+                await locator.type(entry["text"], delay=40)
+                matches = await locator.evaluate("""(el, expected) => {
+                    const value = el.isContentEditable
+                        ? el.innerText
+                        : (('value' in el) ? el.value : el.textContent || '');
+                    return String(value || '') === expected;
+                }""", entry["text"])
+                if not matches:
+                    return outcome.unverified(
+                        "browser_control",
+                        "the form was partly filled, but one field did not match "
+                        "the requested value",
+                        completed=completed,
+                        failed=entry["selector"],
+                    )
+                completed.append(entry["selector"])
+            return outcome.done(
+                "browser_control",
+                filled=len(completed),
+                verified=True,
+            )
+        except Exception as exc:
+            return outcome.failed("browser_control", f"form filling failed: {exc}")
+
     async def fill_form(self, fields: dict) -> str:
-        page    = await self._get_page()
-        results = []
-        for selector, value in fields.items():
-            try:
-                el = page.locator(selector).first
-                await el.clear()
-                await el.type(str(value), delay=40)
-                results.append(f"✓ {selector}")
-            except Exception as e:
-                results.append(f"✗ {selector}: {e}")
-        return "Form filled: " + ", ".join(results)
+        page = await self._get_page()
+        if not isinstance(fields, dict) or not fields:
+            return outcome.failed("browser_control", "no form fields were provided")
+        try:
+            entries = []
+            for selector, value in fields.items():
+                locator = page.locator(selector).first
+                if await locator.count() == 0:
+                    return outcome.failed(
+                        "browser_control",
+                        f"field '{selector}' could not be found; no fields were changed",
+                    )
+                snapshot = await self._field_snapshot(locator)
+                if not snapshot.get("editable"):
+                    return outcome.failed(
+                        "browser_control",
+                        f"'{selector}' is not an editable text field; no fields were changed",
+                    )
+                entries.append({
+                    "selector": str(selector),
+                    "locator": locator,
+                    "snapshot": snapshot,
+                    "text": str(value),
+                })
+
+            expected_url = page.url
+            needs_review = any(
+                entry["snapshot"].get("hasValue") for entry in entries
+            )
+            if needs_review:
+                review_lines = []
+                for entry in entries:
+                    snap = entry["snapshot"]
+                    existing = (
+                        "[password value hidden]"
+                        if snap.get("password")
+                        else (snap.get("value") or "[empty]")
+                    )
+                    replacement = (
+                        f"[password value hidden; {len(entry['text'])} characters]"
+                        if snap.get("password")
+                        else entry["text"]
+                    )
+                    review_lines.append(
+                        f"Field: {entry['selector']} ({snap.get('label')})\n"
+                        f"Existing value:\n{existing}\n"
+                        f"Replacement value:\n{replacement}"
+                    )
+                detail = (
+                    f"Website: {await page.title()}\n"
+                    f"Address: {expected_url}\n\n"
+                    + "\n\n".join(review_lines)
+                    + "\n\nMINDER will fill these fields only if the page and "
+                    "all current field contents are unchanged when you approve."
+                )
+                if len(detail) > confirm.MAX_DETAIL_CHARS:
+                    return outcome.failed(
+                        "browser_control",
+                        "the form is too large to display in full for safe approval; "
+                        "no fields were changed",
+                    )
+                return self._request_browser_approval(
+                    "Approve replacing existing browser form fields",
+                    detail,
+                    run=lambda: self.run(
+                        self._fill_form_after_approval(page, entries, expected_url)
+                    ),
+                )
+
+            return await self._fill_form_after_approval(page, entries, expected_url)
+        except Exception as exc:
+            return outcome.failed("browser_control", f"form filling failed: {exc}")
 
     async def smart_click(self, description: str) -> str:
         page = await self._get_page()
@@ -1183,9 +1432,9 @@ class _BrowserSession:
                 el = loc.first
                 if await el.count() == 0:
                     continue
-                await el.clear()
-                await el.type(text, delay=50)
-                return f"Typed into ({method}): '{description}'"
+                return await self._guarded_type(
+                    page, el, str(text), True, f"{method}: {description}",
+                )
             except Exception:
                 continue
         return f"Could not find input: '{description}'"
