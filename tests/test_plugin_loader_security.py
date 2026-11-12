@@ -150,20 +150,19 @@ class PluginLoaderSecurityTests(unittest.TestCase):
 
     def test_plugin_without_top_level_run_is_rejected_without_import(self):
         path = self.plugins_dir / "missing_run.py"
-        path.write_text(
-            "from pathlib import Path\\n"
-            + "Path(" + repr(str(self.marker)) + ").write_text('executed')\\n"
-            + "PLUGIN = {'name': 'missing_run', 'description': 'No run', "
-              "'parameters': {'type': 'OBJECT', 'properties': {}}}\\n",
-            encoding="utf-8",
-        )
+        source_lines = [
+            "from pathlib import Path",
+            f"Path({str(self.marker)!r}).write_text('executed')",
+            "PLUGIN = {'name': 'missing_run', 'description': 'No run', "
+            "'parameters': {'type': 'OBJECT', 'properties': {}}}",
+        ]
+        path.write_text("\\n".join(source_lines) + "\\n", encoding="utf-8")
         registry = plugin_loader.discover_plugins(
             self.plugins_dir, set(), logger=lambda _message: None,
         )
         self.assertFalse(self.marker.exists())
         self.assertFalse(registry.has("missing_run"))
         self.assertFalse(registry.list_for_ui()[0]["valid"])
-
     def test_symlinked_plugin_source_is_rejected(self):
         source = self._write_plugin(filename="outside.py", name="outside_plugin")
         link = self.plugins_dir / "linked.py"
