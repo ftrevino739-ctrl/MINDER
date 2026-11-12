@@ -325,6 +325,57 @@ class BrowserConfirmationTests(unittest.TestCase):
             close_all.assert_called_once()
 
 
+
+    def test_browser_close_tab_requires_human_approval(self):
+        class FakeSession:
+            def __init__(self):
+                self.closed = False
+            async def get_url(self):
+                return "https://mail.example.test/draft"
+            async def close_tab(self):
+                self.closed = True
+                return "closed"
+            def run(self, coroutine):
+                return asyncio.run(coroutine)
+
+        session = FakeSession()
+        captured = {}
+        with (
+            patch.object(browser_module._registry, "get", return_value=session),
+            patch.object(browser_module._registry, "pop_native_url", return_value=""),
+            patch.object(
+                browser_module.confirm, "request",
+                side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+            ),
+        ):
+            result = browser_module.browser_control({"action": "close_tab"})
+            self.assertEqual(result, "PENDING")
+            self.assertFalse(session.closed)
+            self.assertIn("unsent messages", captured["detail"])
+            captured["run"]()
+            self.assertTrue(session.closed)
+
+    def test_unsubscribe_button_is_detected_from_selector_identifier(self):
+        locator = FakeLocator({
+            "label": "Manage notifications",
+            "formLabel": "",
+            "identifiers": "unsubscribe-button",
+            "isActionControl": True,
+            "isSubmitControl": False,
+            "fields": [],
+        })
+        page = FakePage()
+        captured = {}
+        session = make_session()
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session._click_locator(page, locator, "#unsubscribe-button"))
+        self.assertEqual(result, "PENDING")
+        locator.click.assert_not_awaited()
+
+
     def test_ordinary_navigation_click_does_not_prompt(self):
         locator = FakeLocator({"label": "Home", "formLabel": "", "fields": []})
         page = FakePage()
