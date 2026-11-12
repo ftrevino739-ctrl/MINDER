@@ -15,6 +15,7 @@ class WallpaperUrlSafetyTests(unittest.TestCase):
         self.cache = Path(self.temp.name) / "wallpapers"
         self._cache_patch = patch.object(desktop, "_wallpaper_cache_dir", return_value=self.cache)
         self._cache_patch.start()
+        self.cache.mkdir(parents=True, exist_ok=True)
         self.addCleanup(self._cache_patch.stop)
 
     def tearDown(self):
