@@ -41,15 +41,18 @@ class FileProcessorOutputSafetyTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"user image")
 
     def test_image_save_creates_new_output(self):
+        formats = []
+
         class FakeImage:
             def save(self, handle, format):
-                self.assertEqual(format, "PNG")
+                formats.append(format)
                 handle.write(b"generated image bytes")
 
         with self._home_temp() as folder:
             path = Path(folder) / "image.png"
             result = module._save_pil_image(FakeImage(), path, "PNG")
             self.assertEqual(result, f"Saved to: {path}")
+            self.assertEqual(formats, ["PNG"])
             self.assertEqual(path.read_bytes(), b"generated image bytes")
 
     def test_ffmpeg_runner_inserts_no_overwrite_flag_and_checks_shell_false(self):
