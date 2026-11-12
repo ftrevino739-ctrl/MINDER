@@ -307,18 +307,33 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
         return f"Install error (non-fatal): {e}"
 
 def _open_vscode(project_dir: Path) -> bool:
-    vscode_candidates = [
-        "code",
-        rf"C:\Users\{Path.home().name}\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd",
-        r"C:\Program Files\Microsoft VS Code\bin\code.cmd",
-    ]
-    for cmd in vscode_candidates:
+    """Open the editor using a real executable; never pass a .cmd file to a shell."""
+    candidates: list[str] = []
+    for root in (
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Microsoft VS Code",
+        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Microsoft VS Code",
+        Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Microsoft VS Code",
+    ):
+        exe = root / "Code.exe"
+        if exe.is_file():
+            candidates.append(str(exe))
+
+    located = shutil.which("code")
+    if located:
+        # On Windows, shutil.which may return code.cmd. Launching command
+        # scripts through shell=True made project paths part of a command
+        # string. Only accept executable binaries; macOS/Linux CLI launchers
+        # are executable files and work with shell=False.
+        if sys.platform != "win32" or Path(located).suffix.lower() in {".exe", ".com"}:
+            candidates.append(located)
+
+    for executable in dict.fromkeys(candidates):
         try:
             subprocess.Popen(
-                [cmd, str(project_dir)],
-                shell=True,
+                [executable, str(project_dir)],
+                shell=False,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
             )
             time.sleep(1.5)
             print(f"[DevAgent] 💻 VSCode opened: {project_dir}")
