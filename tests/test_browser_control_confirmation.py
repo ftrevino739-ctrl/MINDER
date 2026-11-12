@@ -89,6 +89,7 @@ class BrowserConfirmationTests(unittest.TestCase):
         page = FakePage()
         captured = {}
         session = make_session()
+        session._get_page = AsyncMock(return_value=page)
 
         with (
             patch.object(browser_module.confirm, "pending_title", return_value=""),
