@@ -110,6 +110,23 @@ class CodeHelperSafetyTests(unittest.TestCase):
             self.assertIs(run.call_args.kwargs["shell"], False)
             self.assertEqual(run.call_args.args[0][-2:], ["--name", "my project"])
 
+    def test_read_and_write_reject_symlinks_even_inside_home(self):
+        with self._home_temp() as folder:
+            root = Path(folder)
+            target = root / "target.py"
+            target.write_text("keep", encoding="utf-8")
+            link = root / "link.py"
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are not supported in this runner")
+            text, error = code_helper._read_file(str(link))
+            self.assertEqual(text, "")
+            self.assertIn("symbolic links", error)
+            result = code_helper._save_file(link, "replace")
+            self.assertIn("status=failed", result)
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep")
+
     def test_execution_does_not_follow_symlink_outside_home(self):
         with self._home_temp() as folder, tempfile.TemporaryDirectory() as outside:
             actual = Path(outside) / "external.py"

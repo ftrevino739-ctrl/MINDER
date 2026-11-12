@@ -100,6 +100,12 @@ def _replace_existing_file(path: Path, content: str,
 
 def _save_file(path: Path, content: str) -> str:
     path = Path(path).expanduser()
+    if path.is_symlink():
+        return outcome.failed(
+            "code_helper",
+            "symbolic links cannot be used as code save targets",
+            path=str(path),
+        )
     if not _safe_user_path(path):
         return outcome.failed(
             "code_helper",
@@ -168,6 +174,8 @@ def _read_file(file_path: str) -> tuple[str, str]:
     if not file_path:
         return "", "No file path provided."
     p = Path(file_path).expanduser()
+    if p.is_symlink():
+        return "", f"Access denied: symbolic links cannot be read by the code helper: {file_path}"
     if not _safe_user_path(p):
         return "", f"Access denied: files outside the user's home folder cannot be read: {file_path}"
     if not p.exists():
@@ -350,6 +358,12 @@ def _execute_code_file(command: list[str], cwd: Path, timeout: int) -> str:
 
 def _run_file(path: Path, args: list | str, timeout: int) -> str:
     path = Path(path).expanduser()
+    if path.is_symlink():
+        return outcome.failed(
+            "code_helper",
+            "symbolic links cannot be executed by the code helper",
+            path=str(path),
+        )
     if not _safe_user_path(path):
         return outcome.failed(
             "code_helper",
