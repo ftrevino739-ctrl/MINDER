@@ -86,8 +86,8 @@ def requires_form_submission_approval(form_label: str, submitters: list[str]) ->
 _SAFE_SCREEN_TARGET = re.compile(
     r"^(?:home|back|forward|next|next page|previous|previous page|"
     r"menu|open menu|close menu|load more|show more|view more|see more|"
-    r"show results|sort|filter|
-    r"search|new tab|play|pause|resume|volume up|volume down|mute|"
+    r"show results|sort|filter|search|new tab|play|pause|resume|"
+    r"volume up|volume down|mute|"
     r"full ?screen|fullscreen|minimi[sz]e|maximi[sz]e|task manager|"
     r"settings|open settings|show desktop|"
     r"inicio|atr[aá]s|adelante|siguiente|anterior|men[uú]|buscar|nueva pesta[nñ]a|"
