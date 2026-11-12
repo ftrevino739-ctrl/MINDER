@@ -489,6 +489,55 @@ class BrowserConfirmationTests(unittest.TestCase):
         self.assertIn("status=failed", result)
         locator.click.assert_not_awaited()
 
+
+    def test_safe_button_requires_approval_when_page_has_unsaved_data(self):
+        locator = FakeLocator({
+            "label": "Home",
+            "formLabel": "",
+            "identifiers": "home-button",
+            "isActionControl": True,
+            "isSubmitControl": False,
+            "isNavigationLink": False,
+            "href": "",
+            "fields": [],
+        })
+        page = FakePage()
+        dirty = [{"label": "Draft", "value": "keep this", "password": False}]
+        session = make_session()
+        session._page_dirty_snapshot = AsyncMock(return_value=dirty)
+        captured = {}
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session._click_locator(page, locator, "Home"))
+        self.assertEqual(result, "PENDING")
+        self.assertIn("keep this", captured["detail"])
+        locator.click.assert_not_awaited()
+
+    def test_search_submit_button_remains_immediate(self):
+        locator = FakeLocator({
+            "label": "Search",
+            "formLabel": "search-form",
+            "identifiers": "",
+            "isActionControl": True,
+            "isSubmitControl": True,
+            "isNavigationLink": False,
+            "href": "",
+            "fields": [],
+        })
+        page = FakePage()
+        session = make_session()
+        session._page_dirty_snapshot = AsyncMock(
+            return_value=[{"label": "Draft", "value": "some search query"}]
+        )
+        with patch.object(browser_module.confirm, "request") as request:
+            result = asyncio.run(session._click_locator(page, locator, "Search"))
+        self.assertIn("Clicked", result)
+        locator.click.assert_awaited_once()
+        session._page_dirty_snapshot.assert_not_awaited()
+        request.assert_not_called()
+
     def test_ordinary_navigation_click_does_not_prompt(self):
         locator = FakeLocator({"label": "Home", "formLabel": "", "fields": []})
         page = FakePage()
