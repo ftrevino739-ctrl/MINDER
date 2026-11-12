@@ -172,6 +172,22 @@ class BrowserFieldReplacementTests(unittest.TestCase):
         field.clear.assert_not_awaited()
         field.type.assert_awaited_once_with("weather today", delay=50)
 
+
+    def test_clear_first_false_preserves_existing_field_contents(self):
+        field = FakeField("prefix")
+        page = FakePage({"#message": field})
+        session = make_session(page)
+
+        with patch.object(browser_module.confirm, "request") as request:
+            result = asyncio.run(
+                session.type_text("#message", "-suffix", clear_first=False)
+            )
+
+        self.assertIn("status=done", result)
+        request.assert_not_called()
+        field.clear.assert_not_awaited()
+        self.assertEqual(field.raw_value, "prefix-suffix")
+
     def test_password_old_and_new_values_are_never_shown_in_confirmation(self):
         field = FakeField("old-secret", password=True, label="Password")
         page = FakePage({"#password": field})

@@ -1001,7 +1001,7 @@ class _BrowserSession:
 
     async def _replace_field_after_approval(self, page, locator, expected_url: str,
                                             expected_snapshot: dict, text: str,
-                                            target: str) -> str:
+                                            target: str, clear_first: bool = True) -> str:
         try:
             if page.is_closed() or page.url != expected_url:
                 return outcome.failed(
@@ -1020,7 +1020,7 @@ class _BrowserSession:
                     "the field changed while approval was pending; nothing was typed",
                     target=target,
                 )
-            if expected_snapshot.get("hasValue"):
+            if clear_first and expected_snapshot.get("hasValue"):
                 await locator.clear()
             await locator.type(text, delay=50)
             matches = await locator.evaluate("""(el, expected) => {
@@ -1082,6 +1082,7 @@ class _BrowserSession:
                 run=lambda: self.run(
                     self._replace_field_after_approval(
                         page, locator, page_url, snapshot, text, target,
+                        clear_first=clear_first,
                     )
                 ),
             )
@@ -1090,6 +1091,7 @@ class _BrowserSession:
         # before typing so a value entered in the meantime is never erased.
         return await self._replace_field_after_approval(
             page, locator, page_url, snapshot, text, target,
+            clear_first=clear_first,
         )
 
     async def type_text(self, selector: str = None, text: str = "",
