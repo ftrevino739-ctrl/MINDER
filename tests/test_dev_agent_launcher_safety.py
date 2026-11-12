@@ -13,7 +13,8 @@ class OpenVSCodeSafetyTests(unittest.TestCase):
     def test_windows_code_exe_is_launched_without_a_shell(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            exe = root / "Code.exe"
+            exe = root / "Programs" / "Microsoft VS Code" / "Code.exe"
+            exe.parent.mkdir(parents=True)
             exe.write_bytes(b"")
             project = root / "MINDER & Projects"
             project.mkdir()
