@@ -523,9 +523,17 @@ def _perform_screen_click(description: str) -> str:
 
 
 def _screen_find(description: str) -> tuple[int, int] | None:
-    api_key = _get_api_key()
-    if not api_key:
-        print("[ComputerControl] ⚠️ No API key for screen_find")
+    # In provider-pipeline mode the selected provider owns this request; a
+    # Gemini credential is neither required nor consulted. If config cannot
+    # be read, fail closed to the pipeline path (core.gemini.call also fails
+    # closed rather than silently falling back to Gemini).
+    try:
+        from memory.config_manager import get_provider_mode
+        pipeline_mode = get_provider_mode() == "pipeline"
+    except Exception:
+        pipeline_mode = True
+    if not pipeline_mode and not _get_api_key():
+        print("[ComputerControl] ⚠️ Gemini mode selected but no API key is configured")
         return None
 
     try:
