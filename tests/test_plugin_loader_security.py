@@ -147,26 +147,21 @@ class PluginLoaderSecurityTests(unittest.TestCase):
                 return approved_bytes
             return original_read_bytes(target)
 
+        registry = plugin_loader.discover_plugins(
+            self.plugins_dir, set(), logger=lambda _message: None,
+        )
         with (
-            patch.object(plugin_loader, "get_plugin_enabled",
-                         side_effect=lambda _name, digest: digest == approved_hash),
+            patch.object(
+                plugin_loader, "get_plugin_enabled",
+                side_effect=lambda _name, digest: digest == approved_hash,
+            ),
             patch.object(Path, "read_bytes", new=swap_after_read),
         ):
-            registry = plugin_loader.discover_plugins(
-                self.plugins_dir, set(), logger=lambda _message: None,
-            )
-            # Discovery reads the current file and pins that source; the next call
-            # simulates a concurrent swap between approval hashing and execution.
-            path.write_bytes(approved_bytes)
-            registry = plugin_loader.discover_plugins(
-                self.plugins_dir, set(), logger=lambda _message: None,
-            )
             result = registry.run("sample_plugin", {})
 
         self.assertEqual(result, "plugin ran")
         self.assertTrue(swapped["done"])
         self.assertEqual(self.marker.read_text(encoding="utf-8"), "executed")
-
     def test_plugin_enablement_persists_the_approved_source_hash(self):
         import json
         from memory import config_manager
