@@ -61,7 +61,7 @@ A model worth checking first is **Mistral Small 4** (`mistralai/mistral-small-26
 
 ## Tests and verification
 
-The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs standard-library provider-mode, file-operation safety and message-confirmation tests, and runs the Qt-offscreen provider regression suite. The latest fully completed provider regression run passed 119 checks with zero failures; the latest syntax matrix passed on Python 3.11, 3.12 and 3.13. The suite also verifies that provider-pipeline one-shot requests and coding calls do not silently fall back to Gemini.
+The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs the standard-library regression suite, and runs the Qt-offscreen provider regression suite. The safety tests cover human approvals and concurrency, browser URL restrictions and unsaved forms, risky desktop input, desktop file organization, DevAgent project paths and command execution, code-helper file access and execution, file-processor outputs, Python execution and archive extraction. These tests use mocks for operating-system actions; they do not prove that the target Windows desktop, browser, microphone or speakers work. The suite also verifies that provider-pipeline one-shot requests and coding calls do not silently fall back to Gemini.
 
 After installing the application dependencies, the provider package also has a local regression suite:
 
