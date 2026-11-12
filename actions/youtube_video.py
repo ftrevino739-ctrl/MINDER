@@ -199,11 +199,11 @@ def _save_summary(content: str, video_url: str) -> str:
     desktop.mkdir(parents=True, exist_ok=True)
 
     header = (
-        f"MINDER — YouTube Summary\\n"
-        f"{'─' * 50}\\n"
-        f"URL    : {video_url}\\n"
-        f"Date   : {datetime.now().strftime('%Y-%m-%d %H:%M')}\\n"
-        f"{'─' * 50}\\n\\n"
+        f"MINDER — YouTube Summary\n"
+        f"{'─' * 50}\n"
+        f"URL    : {video_url}\n"
+        f"Date   : {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"{'─' * 50}\n\n"
     )
     filepath = None
     for counter in range(1000):
