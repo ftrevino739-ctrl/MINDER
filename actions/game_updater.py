@@ -834,6 +834,26 @@ def game_updater(parameters: dict, player=None, speak=None) -> str:
         return outcome.failed("game_updater", "unsupported platform; choose steam, epic, or both")
     if app_id and (not app_id.isdigit() or len(app_id) > 12):
         return outcome.failed("game_updater", "Steam AppID must contain 1 to 12 digits")
+    if action == "install" and platform != "steam":
+        return outcome.failed(
+            "game_updater",
+            "game installation is currently supported only through Steam; choose platform=steam",
+        )
+    if action == "install" and not game_name:
+        return outcome.failed(
+            "game_updater",
+            "a game name is required for Steam installation; AppID may be supplied as an additional identifier",
+        )
+    if action == "schedule" and platform != "both":
+        return outcome.failed(
+            "game_updater",
+            "the current daily scheduled task updates both Steam and Epic; choose platform=both",
+        )
+    if shutdown and platform == "epic":
+        return outcome.failed(
+            "game_updater",
+            "automatic shutdown is currently supported only for Steam downloads",
+        )
     if action in {"schedule", "cancel_schedule", "schedule_status"}:
         try:
             hour = int(params.get("hour", 3))
