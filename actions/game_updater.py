@@ -680,6 +680,11 @@ def _game_updater_execute(parameters: dict, player=None, speak=None) -> str:
         return outcome.failed("game_updater", "unsupported platform; choose steam, epic, or both")
     if app_id and (not app_id.isdigit() or len(app_id) > 12):
         return outcome.failed("game_updater", "Steam AppID must contain 1 to 12 digits")
+    params["action"] = action
+    params["platform"] = platform
+    params["game_name"] = game_name
+    params["app_id"] = app_id
+    params["shutdown_when_done"] = shutdown
     if action in {"schedule", "cancel_schedule", "schedule_status"}:
         if not 0 <= hour <= 23 or not 0 <= minute <= 59:
             return outcome.failed("game_updater", "schedule time must be between 00:00 and 23:59")

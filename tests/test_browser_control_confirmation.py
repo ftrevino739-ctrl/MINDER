@@ -454,6 +454,30 @@ class BrowserConfirmationTests(unittest.TestCase):
         self.assertIn("unsaved form data changed", refused)
         locator.click.assert_not_awaited()
 
+    def test_unknown_navigation_link_requires_approval(self):
+        locator = FakeLocator({
+            "label": "Continue",
+            "formLabel": "",
+            "identifiers": "",
+            "isActionControl": False,
+            "isSubmitControl": False,
+            "isNavigationLink": True,
+            "href": "https://mail.example.test/continue",
+            "fields": [],
+        })
+        page = FakePage()
+        captured = {}
+        session = make_session()
+        session._page_dirty_snapshot = AsyncMock(return_value=[])
+        with patch.object(
+            browser_module.confirm, "request",
+            side_effect=lambda **kwargs: captured.update(kwargs) or "PENDING",
+        ):
+            result = asyncio.run(session._click_locator(page, locator, "Continue"))
+        self.assertEqual(result, "PENDING")
+        locator.click.assert_not_awaited()
+        self.assertIn("Destination:", captured["detail"])
+
     def test_same_document_fragment_link_does_not_prompt(self):
         locator = FakeLocator({
             "label": "Jump to details",

@@ -1041,6 +1041,7 @@ class _BrowserSession:
         identifiers = (details.get("identifiers") or "").strip()
         href = (details.get("href") or "").strip()
         is_navigation_link = bool(details.get("isNavigationLink"))
+        link_navigates = False
 
         # An anchor is navigation, not a neutral text click. Refuse active or
         # local URI schemes before Playwright has a chance to hand them to OS apps.
@@ -1065,7 +1066,8 @@ class _BrowserSession:
                 and parsed_destination.query == current.query
             )
             # Hash-only jumps do not discard the current document or its draft.
-            if not same_document:
+            link_navigates = not same_document
+            if link_navigates:
                 dirty = await self._page_dirty_snapshot(page)
                 if dirty:
                     page_url = page.url
@@ -1116,6 +1118,10 @@ class _BrowserSession:
         requires_approval = (
             (details.get("isSubmitControl") and not is_search_submit)
             or sensitive
+            or (
+                link_navigates
+                and requires_screen_click_approval(label or description)
+            )
             or (
                 details.get("isActionControl")
                 and requires_screen_click_approval(label or description)

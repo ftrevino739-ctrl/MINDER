@@ -38,16 +38,15 @@ class FileControllerSafetyTests(unittest.TestCase):
             patch.object(file_controller, "_safe_trash", return_value="Moved to Trash: important.txt") as trash,
         ):
             result = file_controller.delete_file(str(self.root), "important.txt")
-
-        self.assertEqual(result, "[CONFIRMATION_PENDING]")
-        gate.assert_called_once()
-        trash.assert_not_called()
-        self.assertTrue(target.exists())
-        self.assertIn(str(target), captured["detail"])
-        self.assertIn("not permanently erase", captured["detail"])
-        moved = captured["run"]()
-        self.assertIn("Moved to Trash", moved)
-        trash.assert_called_once_with(target)
+            self.assertEqual(result, "[CONFIRMATION_PENDING]")
+            gate.assert_called_once()
+            trash.assert_not_called()
+            self.assertTrue(target.exists())
+            self.assertIn(str(target), captured["detail"])
+            self.assertIn("not permanently erase", captured["detail"])
+            moved = captured["run"]()
+            self.assertIn("Moved to Trash", moved)
+            trash.assert_called_once_with(target)
 
     def test_delete_refuses_if_file_changes_while_approval_is_pending(self) -> None:
         target = self.root / "important.txt"

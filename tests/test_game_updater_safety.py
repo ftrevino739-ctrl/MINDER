@@ -18,13 +18,12 @@ class GameUpdaterSafetyTests(unittest.TestCase):
             patch.object(game_module, "_game_updater_execute") as execute,
         ):
             result = game_module.game_updater(params)
-
-        self.assertEqual(result, "PENDING")
-        execute.assert_not_called()
-        self.assertIn("Example Game", captured["detail"])
-        self.assertIn("will not shut down", captured["detail"].lower())
-        captured["run"]()
-        execute.assert_called_once()
+            self.assertEqual(result, "PENDING")
+            execute.assert_not_called()
+            self.assertIn("Example Game", captured["detail"])
+            self.assertIn("will not shut down", captured["detail"].lower())
+            captured["run"]()
+            execute.assert_called_once()
 
     def test_shutdown_is_spelled_out_in_approval(self):
         captured = {}
