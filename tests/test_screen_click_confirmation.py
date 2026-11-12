@@ -57,6 +57,10 @@ class ScreenClickConfirmationTests(unittest.TestCase):
             patch.object(computer_module, "_PYAUTOGUI", True),
             patch.object(computer_module, "_screen_find", return_value=None),
             patch.object(computer_module, "_click") as click,
+            patch.object(
+                computer_module.confirm, "request",
+                side_effect=lambda **kwargs: kwargs["run"](),
+            ),
         ):
             result = computer_module.computer_control({
                 "action": "screen_click",
