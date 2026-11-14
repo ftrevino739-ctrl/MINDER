@@ -2807,8 +2807,9 @@ class ProvidersOverlay(_HudOverlay):
         self._provider_status.connect(self._on_provider_status)
         self._model_cache: dict[str, list] = {}
         self._model_cache_fingerprint: dict[str, str] = {}
-        from providers.catalog_requests import CatalogRequestGate
+        from providers.catalog_requests import CatalogRequestGate, catalogue_fingerprint
         self._model_requests = CatalogRequestGate()
+        self._catalogue_fingerprint = catalogue_fingerprint
         self._probe_generation: dict[str, int] = {}
         self._list_generation: dict[str, int] = {}
         for _kind in ("tts", "stt", "llm"):
@@ -2986,7 +2987,7 @@ class ProvidersOverlay(_HudOverlay):
         values = self._provider_values_snapshot(pid)
         if not values.get("base_url") and not values.get("api_key"):
             return
-        fingerprint = self._provider_values_fingerprint(values)
+        fingerprint = self._catalogue_fingerprint(values)
         generation = self._model_requests.begin(pid, fingerprint)
         if generation is None:
             return
@@ -3051,7 +3052,7 @@ class ProvidersOverlay(_HudOverlay):
         if not self._model_requests.is_current(pid, generation, fingerprint):
             return
         try:
-            current = self._provider_values_fingerprint(
+            current = self._catalogue_fingerprint(
                 self._provider_values_snapshot(pid))
         except Exception:
             self._model_requests.complete(pid, generation, fingerprint)
@@ -3364,7 +3365,7 @@ class ProvidersOverlay(_HudOverlay):
             # Reuse only a catalogue obtained with this exact provider config.
             # A changed endpoint/key must trigger discovery rather than reusing
             # values that belonged to the previous server.
-            current_fp = self._provider_values_fingerprint(
+            current_fp = self._catalogue_fingerprint(
                 self._provider_values_snapshot(sid))
             cached = self._model_cache.get(sid)
             if (cached and
@@ -3813,17 +3814,21 @@ class ProvidersOverlay(_HudOverlay):
         from providers import diagnostics
 
         values = self._provider_values_snapshot(pid)
-        # Manual refresh supersedes an automatic catalogue read for this ID.
+        fingerprint = self._catalogue_fingerprint(values)
+        # Reserve the same per-provider gate used by automatic discovery.
         self._model_requests.invalidate(pid)
+        catalogue_generation = self._model_requests.begin(pid, fingerprint)
+        if catalogue_generation is None:
+            return
         self._say(pid, "reading in background…", C.TEXT_DIM)
         generation = self._list_generation.get(pid, 0) + 1
         self._list_generation[pid] = generation
-        fingerprint = self._provider_values_fingerprint(values)
         registry = self._registry
 
         def work():
             result = diagnostics.list_provider_options(registry, pid, values)
             result["fingerprint"] = fingerprint
+            result["catalogue_generation"] = catalogue_generation
             self._list_ready.emit(pid, generation, result)
 
         threading.Thread(target=work, daemon=True,
@@ -3831,17 +3836,30 @@ class ProvidersOverlay(_HudOverlay):
 
     def _on_list_ready(self, pid: str, generation: int, result: dict) -> None:
         """Update the service selector after the background catalogue call."""
-        if generation != self._list_generation.get(pid) or pid not in self._status:
+        if generation != self._list_generation.get(pid):
+            return
+        fingerprint = str(result.get("fingerprint") or "")
+        catalogue_generation = result.get("catalogue_generation")
+        if not isinstance(catalogue_generation, int):
+            return
+        if not self._model_requests.is_current(
+                pid, catalogue_generation, fingerprint):
+            return
+        if pid not in self._status:
+            self._model_requests.complete(pid, catalogue_generation, fingerprint)
             return
         try:
-            current = self._provider_values_fingerprint(
+            current = self._catalogue_fingerprint(
                 self._provider_values_snapshot(pid))
         except Exception:
+            self._model_requests.complete(pid, catalogue_generation, fingerprint)
             return
-        if result.get("fingerprint") != current:
+        if fingerprint != current:
+            self._model_requests.complete(pid, catalogue_generation, fingerprint)
             self._say(pid, "settings changed — refresh again.", C.TEXT_DIM)
             return
 
+        self._model_requests.complete(pid, catalogue_generation, fingerprint)
         message = str(result.get("message") or "")
         if result.get("error"):
             self._say(pid, f"✕  {message}", C.RED)
