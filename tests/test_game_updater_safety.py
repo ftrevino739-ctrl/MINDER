@@ -15,7 +15,7 @@ class GameUpdaterSafetyTests(unittest.TestCase):
             result = game_module._schedule_windows(4, 15)
         self.assertIn("scheduled at 04:15", result)
         args = run.call_args.args[0]
-        self.assertIn("MINDER_GameUpdater", args)
+        self.assertIn("JARVIS_GameUpdater", args)
         self.assertNotIn("/RL", args)
         self.assertNotIn("/RU", args)
         self.assertNotIn("SYSTEM", args)

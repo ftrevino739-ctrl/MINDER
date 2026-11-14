@@ -544,7 +544,7 @@ def _schedule_daily_update(hour: int = 3, minute: int = 0) -> str:
 def _schedule_windows(hour: int, minute: int) -> str:
     # Run only as the current user. Never elevate this background task to
     # HIGHEST/SYSTEM: game updates must not gain administrator privileges.
-    task_name = "MINDER_GameUpdater"
+    task_name = "JARVIS_GameUpdater"
     script_path = Path(__file__).resolve()
     cmd = [
         "schtasks", "/Create", "/TN", task_name,
@@ -559,7 +559,7 @@ def _schedule_windows(hour: int, minute: int) -> str:
 def _schedule_mac(hour: int, minute: int) -> str:
     plist_dir   = Path.home() / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True, exist_ok=True)
-    plist_path  = plist_dir / "com.minder.gameupdater.plist"
+    plist_path  = plist_dir / "com.jarvis.gameupdater.plist"
     script_path = Path(__file__).resolve()
     plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -593,7 +593,7 @@ def _schedule_mac(hour: int, minute: int) -> str:
 
 def _schedule_linux(hour: int, minute: int) -> str:
     script_path = Path(__file__).resolve()
-    marker      = "# MINDER_GameUpdater"
+    marker      = "# JARVIS_GameUpdater"
     cron_entry  = f"{minute} {hour} * * * {sys.executable} {script_path} --scheduled  {marker}"
     try:
         existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
@@ -613,13 +613,13 @@ def _schedule_linux(hour: int, minute: int) -> str:
 def _cancel_scheduled_update() -> str:
     if is_windows():
         result = subprocess.run(
-            ["schtasks", "/Delete", "/TN", "MINDER_GameUpdater", "/F"],
+            ["schtasks", "/Delete", "/TN", "JARVIS_GameUpdater", "/F"],
             capture_output=True, text=True, **_CNW
         )
         return ("Scheduled update cancelled."
                 if result.returncode == 0 else "No scheduled update found.")
     if is_mac():
-        plist_path = Path.home() / "Library" / "LaunchAgents" / "com.minder.gameupdater.plist"
+        plist_path = Path.home() / "Library" / "LaunchAgents" / "com.jarvis.gameupdater.plist"
         if plist_path.exists():
             subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
             plist_path.unlink()
@@ -629,7 +629,7 @@ def _cancel_scheduled_update() -> str:
     try:
         existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
         lines    = [l for l in existing.stdout.splitlines()
-                    if "MINDER_GameUpdater" not in l]
+                    if "JARVIS_GameUpdater" not in l]
         subprocess.run(["crontab", "-"],
                        input="\n".join(lines) + "\n", text=True)
         return "Scheduled update cancelled."
@@ -640,7 +640,7 @@ def _cancel_scheduled_update() -> str:
 def _get_schedule_status() -> str:
     if is_windows():
         result = subprocess.run(
-            ["schtasks", "/Query", "/TN", "MINDER_GameUpdater", "/FO", "LIST"],
+            ["schtasks", "/Query", "/TN", "JARVIS_GameUpdater", "/FO", "LIST"],
             capture_output=True, text=True, **_CNW
         )
         if result.returncode != 0:
@@ -652,15 +652,15 @@ def _get_schedule_status() -> str:
         return "Game update is scheduled."
     if is_mac():
         plist_path = (Path.home() / "Library" / "LaunchAgents"
-                      / "com.minder.gameupdater.plist")
+                      / "com.jarvis.gameupdater.plist")
         return ("Game update is scheduled via launchd."
                 if plist_path.exists() else "No scheduled game update found.")
 
     try:
         result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-        if "MINDER_GameUpdater" in result.stdout:
+        if "JARVIS_GameUpdater" in result.stdout:
             for line in result.stdout.splitlines():
-                if "MINDER_GameUpdater" in line:
+                if "JARVIS_GameUpdater" in line:
                     return f"Game update is scheduled: {line.split('#')[0].strip()}"
         return "No scheduled game update found."
     except Exception:
