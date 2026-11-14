@@ -44,6 +44,16 @@ def main() -> int:
         if window.hud is None or window.centralWidget() is None:
             raise RuntimeError("MINDER HUD or central window content was not constructed")
 
+        transcript = getattr(window, "_log", None)
+        if transcript is None:
+            raise RuntimeError("MINDER transcript widget was not constructed")
+        if transcript.objectName() != "minderGlassTranscript":
+            raise RuntimeError("Transcript is missing its Liquid Glass identity")
+        if not transcript.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground):
+            raise RuntimeError("Transcript surface is not configured as translucent")
+        if "border-radius: 14px" not in transcript.styleSheet():
+            raise RuntimeError("Transcript does not have its rounded glass treatment")
+
         # Exercise the same queued signal path used by the voice worker thread.
         ui.set_state("LISTENING")
         app.processEvents()
@@ -112,6 +122,7 @@ def main() -> int:
         print(f"[OK] Qt application: {QApplication.instance() is app}")
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
+        print("[OK] Liquid Glass transcript surface: constructed")
         print("[OK] Queued state update: delivered")
         print("[OK] Nine glass overlays: constructed with safe fixtures")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
