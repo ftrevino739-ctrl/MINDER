@@ -55,6 +55,19 @@ class CatalogRequestGateTests(unittest.TestCase):
         self.assertEqual(sum(value is not None for value in generations), 1)
         self.assertEqual(sum(value is None for value in generations), 23)
 
+    def test_manual_refresh_reservation_supersedes_auto_and_blocks_duplicates(self):
+        automatic = self.gate.begin("xkiro", "endpoint/key")
+
+        # Manual refresh intentionally invalidates the automatic request then
+        # reserves that provider until its own result is accepted.
+        self.gate.invalidate("xkiro")
+        manual = self.gate.begin("xkiro", "endpoint/key")
+
+        self.assertFalse(self.gate.is_current("xkiro", automatic, "endpoint/key"))
+        self.assertIsNotNone(manual)
+        self.assertIsNone(self.gate.begin("xkiro", "endpoint/key"))
+        self.assertTrue(self.gate.is_current("xkiro", manual, "endpoint/key"))
+
     def test_new_configuration_supersedes_old_worker(self):
         old = self.gate.begin("xkiro", "key-a/model-a")
         new = self.gate.begin("xkiro", "key-b/model-b")
