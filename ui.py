@@ -1045,24 +1045,39 @@ class LogWidget(QTextEdit):
         # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
         self.setFont(QFont("Segoe UI", 9))
+        self.setObjectName("minderGlassTranscript")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(f"""
-            QTextEdit {{
-                background: {C.PANEL};
+            QTextEdit#minderGlassTranscript {{
+                background: rgba(16, 25, 38, 218);
                 color: {C.TEXT};
-                border: 1px solid {C.BORDER};
-                border-radius: 4px;
-                padding: 6px;
+                border: 1px solid rgba(220, 236, 252, 62);
+                border-radius: 14px;
+                padding: 10px;
                 selection-background-color: {C.PRI_GHO};
             }}
-            QScrollBar:vertical {{
-                background: {C.BG};
-                width: 8px;
+            QTextEdit#minderGlassTranscript:focus {{
+                border: 1px solid rgba(220, 236, 252, 92);
+            }}
+            QTextEdit#minderGlassTranscript QScrollBar:vertical {{
+                background: transparent;
+                width: 9px;
+                margin: 8px 2px 8px 0;
                 border: none;
             }}
-            QScrollBar::handle:vertical {{
-                background: {C.BORDER_B};
+            QTextEdit#minderGlassTranscript QScrollBar::handle:vertical {{
+                background: rgba(220, 236, 252, 76);
                 border-radius: 4px;
-                min-height: 20px;
+                min-height: 24px;
+            }}
+            QTextEdit#minderGlassTranscript QScrollBar::handle:vertical:hover {{
+                background: {C.PRI_DIM};
+            }}
+            QTextEdit#minderGlassTranscript QScrollBar::add-line:vertical,
+            QTextEdit#minderGlassTranscript QScrollBar::sub-line:vertical {{
+                height: 0;
+                border: none;
             }}
         """)
         self._queue: list[str] = []
