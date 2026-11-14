@@ -2787,6 +2787,7 @@ class ProvidersOverlay(_HudOverlay):
     # data through these signals; workers never touch a QWidget.
     _probe_ready = pyqtSignal(str, int, object)
     _list_ready = pyqtSignal(str, int, object)
+    _provider_status = pyqtSignal(str, str, str)
     _OW = 760                       # the window's own minimum is 820
 
     # Which provider fills each slot, and what the slot is FOR — in the words
@@ -2821,6 +2822,7 @@ class ProvidersOverlay(_HudOverlay):
         self._models_ready.connect(self._on_models_ready)
         self._probe_ready.connect(self._on_probe_ready)
         self._list_ready.connect(self._on_list_ready)
+        self._provider_status.connect(self._on_provider_status)
         self._model_cache: dict[str, list] = {}
         self._fetching: set = set()
         self._probe_generation: dict[str, int] = {}
@@ -3053,9 +3055,14 @@ class ProvidersOverlay(_HudOverlay):
         def report(ok, msg):
             colour = C.TEXT_DIM if ok is None else (C.GREEN if ok else C.RED)
             mark = "" if ok is None else ("✓  " if ok else "✕  ")
-            QTimer.singleShot(0, lambda: self._say(pid, mark + msg, colour))
+            self._provider_status.emit(pid, mark + str(msg), colour)
 
         threading.Thread(target=lambda: fn(values, report), daemon=True).start()
+
+    def _on_provider_status(self, pid: str, message: str, colour: str) -> None:
+        """Show preparation/install status on the Qt thread."""
+        if pid in self._status:
+            self._say(pid, message, colour)
 
     def _on_models_ready(self, pid: str, items: list) -> None:
         self._model_cache[pid] = list(items)
@@ -3070,14 +3077,18 @@ class ProvidersOverlay(_HudOverlay):
             return
         box = entry[0]
         keep = box.currentData() or box.currentText()
-        box.clear()
-        for value, label in items:
-            box.addItem(str(label), str(value))
-        j = box.findData(keep)
-        if j >= 0:
-            box.setCurrentIndex(j)
-        elif keep:
-            box.setCurrentText(keep)
+        previous = box.blockSignals(True)
+        try:
+            box.clear()
+            for value, label in items:
+                box.addItem(str(label), str(value))
+            j = box.findData(keep)
+            if j >= 0:
+                box.setCurrentIndex(j)
+            elif keep:
+                box.setCurrentText(keep)
+        finally:
+            box.blockSignals(previous)
         self._say(pid, f"{len(items)} model{'s' if len(items) != 1 else ''} "
                        f"found on this server — pick one above.", C.TEXT_DIM)
 
@@ -3853,8 +3864,8 @@ class ProvidersOverlay(_HudOverlay):
                        if good else (tail[-1][:150] if tail else "pip failed"))
             except Exception as e:
                 good, msg = False, f"{type(e).__name__}: {str(e)[:120]}"
-            QTimer.singleShot(0, lambda: self._say(pid, msg,
-                                                   C.GREEN if good else C.RED))
+            self._provider_status.emit(
+                pid, msg, C.GREEN if good else C.RED)
 
         threading.Thread(target=work, daemon=True).start()
 
