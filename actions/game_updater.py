@@ -23,6 +23,9 @@ _CNW: dict = (
     {"creationflags": subprocess.CREATE_NO_WINDOW}
     if platform.system() == "Windows" else {}
 )
+# Recognize both the retained legacy task ID and the brief MINDER alias
+# written by an intermediate build, so updates/cancellation do not orphan it.
+_SCHEDULE_MARKERS = ("JARVIS_GameUpdater", "MINDER_GameUpdater")
 
 _KNOWN_APPIDS: dict[str, tuple[str, str]] = {
     "pubg":                ("578080",  "PUBG: Battlegrounds"),
@@ -604,8 +607,10 @@ def _schedule_linux(hour: int, minute: int) -> str:
     cron_entry  = f"{minute} {hour} * * * {sys.executable} {script_path} --scheduled  {marker}"
     try:
         existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-        lines    = [l for l in existing.stdout.splitlines()
-                    if marker not in l and str(script_path) not in l]
+        lines    = [
+            line for line in existing.stdout.splitlines()
+            if not any(managed_marker in line for managed_marker in _SCHEDULE_MARKERS)
+        ]
         lines.append(cron_entry)
         proc = subprocess.run(["crontab", "-"],
                               input="\n".join(lines) + "\n",
@@ -635,8 +640,10 @@ def _cancel_scheduled_update() -> str:
 
     try:
         existing = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-        lines    = [l for l in existing.stdout.splitlines()
-                    if "JARVIS_GameUpdater" not in l]
+        lines    = [
+            line for line in existing.stdout.splitlines()
+            if not any(managed_marker in line for managed_marker in _SCHEDULE_MARKERS)
+        ]
         subprocess.run(["crontab", "-"],
                        input="\n".join(lines) + "\n", text=True)
         return "Scheduled update cancelled."
@@ -665,10 +672,9 @@ def _get_schedule_status() -> str:
 
     try:
         result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-        if "JARVIS_GameUpdater" in result.stdout:
-            for line in result.stdout.splitlines():
-                if "JARVIS_GameUpdater" in line:
-                    return f"Game update is scheduled: {line.split('#')[0].strip()}"
+        for line in result.stdout.splitlines():
+            if any(managed_marker in line for managed_marker in _SCHEDULE_MARKERS):
+                return f"Game update is scheduled: {line.split('#')[0].strip()}"
         return "No scheduled game update found."
     except Exception:
         return "No scheduled game update found."
