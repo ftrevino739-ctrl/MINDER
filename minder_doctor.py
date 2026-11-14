@@ -99,6 +99,45 @@ def _audio_report() -> None:
         _line("WARN", "Audio device enumeration", f"{type(exc).__name__}: {exc}")
 
 
+
+def _playwright_browser_paths() -> tuple[dict[str, Path], str]:
+    """Return the configured Playwright browser executable paths, without launching them.
+
+    Starting Playwright's local driver does not open a browser, visit a URL, or
+    download anything. Missing driver/runtime installations are reported as a
+    warning because browser automation is optional for a text-only session.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as runtime:
+            return {
+                "Chromium": Path(runtime.chromium.executable_path),
+                "Firefox": Path(runtime.firefox.executable_path),
+            }, ""
+    except Exception as exc:
+        return {}, f"{type(exc).__name__}: {exc}"
+
+
+def _browser_report() -> None:
+    """Check that the browser binaries expected by MINDER are on disk."""
+    if not _module_available("playwright"):
+        _line("WARN", "Playwright browser runtimes", "Playwright package is not installed")
+        return
+
+    paths, error = _playwright_browser_paths()
+    if error:
+        _line("WARN", "Playwright browser runtimes",
+              f"could not inspect the local driver: {error}")
+        return
+
+    for browser, executable in paths.items():
+        if executable.is_file():
+            _line("OK", f"Browser runtime: {browser}", str(executable))
+        else:
+            _line("WARN", f"Browser runtime: {browser}",
+                  f"not installed; run: python -m playwright install {browser.lower()}")
+
+
 def main() -> int:
     print("MINDER DOCTOR - read-only diagnostics")
     print("=" * 48)
@@ -134,6 +173,7 @@ def main() -> int:
 
     _provider_report()
     _audio_report()
+    _browser_report()
 
     if platform.system() == "Windows":
         for label, module_name in (
