@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -25,6 +26,8 @@ class ReminderSafetyTests(unittest.TestCase):
         path = reminder_module._write_notify_script(task_name, "A safe reminder", "windows")
         original = path.read_text(encoding="utf-8")
         self.assertTrue(path.exists())
+        if os.name == "nt":
+            self.skipTest("Windows uses inherited profile ACLs rather than POSIX mode bits")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         with self.assertRaises(FileExistsError):
             reminder_module._write_notify_script(task_name, "A different reminder", "windows")
