@@ -20,6 +20,7 @@ def enqueue_microphone_frame(
     ptt_state: Callable[[], tuple[bool, bool]],
     data: bytes,
     mime_type: str = "audio/pcm",
+    on_overflow: Callable[[], None] | None = None,
 ) -> bool:
     """Schedule one frame, rejecting it when PTT is enabled but not held.
 
@@ -35,10 +36,22 @@ def enqueue_microphone_frame(
         ptt_enabled, ptt_held = ptt_state()
         if ptt_enabled and not ptt_held:
             return False
-        loop.call_soon_threadsafe(
-            queue.put_nowait,
-            {"data": bytes(data), "mime_type": mime_type},
-        )
+        payload = {"data": bytes(data), "mime_type": mime_type}
+
+        def _put_frame():
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                # A slow/disconnected provider must not raise out of a Qt/IO
+                # callback and poison the event loop. Report the dropped frame
+                # to the owner; the bounded queue intentionally caps latency.
+                if on_overflow is not None:
+                    try:
+                        on_overflow()
+                    except Exception:
+                        pass
+
+        loop.call_soon_threadsafe(_put_frame)
     return True
 
 
