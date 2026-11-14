@@ -108,9 +108,9 @@ def install_and_download(logger: Callable[[str], None] = print,
 
 class WakeWordDetector:
     """
-    Runs the wake model in a dedicated thread. The mic thread calls feed() with
-    raw int16 frames; detections invoke on_detect() (called from this thread —
-    the callback must marshal to whatever loop/UI it needs).
+    Runs one isolated wake-model session in a dedicated thread. Each start gets
+    its own queue, stop event and model reference. A quick stop/start therefore
+    cannot revive an old worker or make it consume frames from the new session.
     """
 
     def __init__(self, on_detect: Callable[[], None],
@@ -119,93 +119,141 @@ class WakeWordDetector:
                  notify: Callable[[str], None] | None = None):
         self._on_detect = on_detect
         self._threshold = threshold
-        self._logger    = logger
-        # See PluginRegistry: `logger` is the console and gets everything,
-        # `notify` is the activity log and gets only what the user must act on.
-        self._notify    = notify or (lambda _msg: None)
+        self._logger = logger
+        self._notify = notify or (lambda _msg: None)
         self._queue: queue.Queue = queue.Queue(maxsize=50)
         self._thread: threading.Thread | None = None
+        self._stop_event: threading.Event | None = None
         self._running = False
         self._model = None
         self._ready = False
 
     def start(self) -> bool:
-        """Load the model and spawn the inference thread. Returns True on success.
-        Safe to call again — a no-op if already running. Never raises."""
-        if self._running:
+        """Load the model and spawn an inference thread. Safe to call repeatedly."""
+        if self._running and self._thread is not None and self._thread.is_alive():
             return True
+
+        self._running = False
+        self._ready = False
         try:
             from openwakeword.model import Model
-            self._model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx")
+            model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx")
+            work_queue: queue.Queue = queue.Queue(maxsize=50)
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=self._loop,
+                args=(work_queue, stop_event, model),
+                daemon=True,
+                name="WakeWordThread",
+            )
+            self._queue = work_queue
+            self._stop_event = stop_event
+            self._model = model
+            self._thread = thread
+            self._running = True
+            self._ready = True
+            thread.start()
         except Exception as e:
-            self._logger(f"Wake word: could not load model — {e}")
-            self._notify("Wake word unavailable — use the WAKE NOW button.")
+            self._running = False
+            self._ready = False
             self._model = None
+            self._thread = None
+            self._logger(f"Wake word: could not start detector — {e}")
+            self._notify("Wake word unavailable — use the WAKE NOW button.")
             return False
-        self._running = True
-        self._ready = True
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="WakeWordThread")
-        self._thread.start()
+
         self._logger("Wake word: listening for 'Hey Jarvis'.")
         return True
 
     def stop(self) -> None:
+        """Stop the current session without allowing it to leak into a restart."""
         self._running = False
-        # unblock the thread if it's waiting on the queue
+        stop_event = self._stop_event
+        work_queue = self._queue
+        if stop_event is not None:
+            stop_event.set()
+
+        # Drop buffered frames and wake a worker blocked in Queue.get().
+        self._drain(work_queue)
         try:
-            self._queue.put_nowait(None)
-        except Exception:
+            work_queue.put_nowait(None)
+        except queue.Full:
             pass
+
+        thread = self._thread
+        self._thread = None
         self._model = None
         self._ready = False
+        if (thread is not None and thread.is_alive()
+                and thread is not threading.current_thread()):
+            # Do not freeze the Qt thread while an in-flight inference finishes.
+            # The worker owns its old model/queue/event and cannot affect a restart.
+            thread.join(timeout=0.25)
 
     @property
     def ready(self) -> bool:
         return self._ready
 
     def feed(self, frame_int16) -> None:
-        """Called from the mic callback (real-time thread). Must stay cheap and
-        never block — the frame is copied and dropped if the queue is backed up."""
-        if not self._running:
+        """Non-blocking mic callback: copy a frame and drop it if the queue is full."""
+        work_queue = self._queue
+        stop_event = self._stop_event
+        if not self._running or stop_event is None or stop_event.is_set():
             return
         try:
-            # frame_int16 is a numpy int16 array (possibly 2-D mono) — flatten to 1-D
             data = frame_int16[:, 0].copy() if getattr(frame_int16, "ndim", 1) > 1 else frame_int16.copy()
-            self._queue.put_nowait(data)
+            work_queue.put_nowait(data)
         except queue.Full:
             pass
         except Exception:
             pass
 
-    def _loop(self) -> None:
-        import numpy as np
-        while self._running:
-            try:
-                frame = self._queue.get()
-                if frame is None or not self._running:
-                    break
-                scores = self._model.predict(np.asarray(frame, dtype=np.int16))
-                score = 0.0
-                if isinstance(scores, dict):
-                    # match the jarvis model regardless of exact key suffix
-                    for k, v in scores.items():
-                        if "jarvis" in k.lower():
-                            score = max(score, float(v))
-                    if score == 0.0 and scores:
-                        score = max(float(v) for v in scores.values())
-                if score >= self._threshold:
-                    # drain any backlog so we don't double-fire on the same utterance
-                    self._drain()
-                    try:
-                        self._on_detect()
-                    except Exception as e:
-                        self._logger(f"Wake word: on_detect error — {e}")
-            except Exception as e:
-                self._logger(f"Wake word: inference error — {e}")
+    def _loop(self, work_queue: queue.Queue, stop_event: threading.Event, model) -> None:
+        try:
+            import numpy as np
+            while not stop_event.is_set():
+                try:
+                    frame = work_queue.get()
+                    if frame is None or stop_event.is_set():
+                        break
+                    scores = model.predict(np.asarray(frame, dtype=np.int16))
+                    if stop_event.is_set():
+                        break
 
-    def _drain(self) -> None:
+                    score = 0.0
+                    if isinstance(scores, dict):
+                        for key, value in scores.items():
+                            if "jarvis" in key.lower():
+                                score = max(score, float(value))
+                        if score == 0.0 and scores:
+                            score = max(float(value) for value in scores.values())
+
+                    if score >= self._threshold:
+                        self._drain(work_queue)
+                        if stop_event.is_set():
+                            break
+                        try:
+                            self._on_detect()
+                        except Exception as e:
+                            self._logger(f"Wake word: on_detect error — {e}")
+                except Exception as e:
+                    if stop_event.is_set():
+                        break
+                    self._logger(f"Wake word: inference error — {e}")
+        except Exception as e:
+            if not stop_event.is_set():
+                self._logger(f"Wake word: detector thread failed — {e}")
+        finally:
+            # An old worker must never clear the state of a newer session.
+            if self._thread is threading.current_thread():
+                self._running = False
+                self._ready = False
+                self._model = None
+
+    @staticmethod
+    def _drain(work_queue: queue.Queue) -> None:
         try:
             while True:
-                self._queue.get_nowait()
-        except Exception:
+                work_queue.get_nowait()
+        except queue.Empty:
             pass
