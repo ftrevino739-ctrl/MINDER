@@ -37,6 +37,14 @@ class CatalogRequestGateTests(unittest.TestCase):
             catalogue_fingerprint(original), catalogue_fingerprint(changed_key)
         )
 
+    def test_catalogue_fingerprint_does_not_expose_credentials(self):
+        fingerprint = catalogue_fingerprint({
+            "base_url": "https://api.example/v1",
+            "api_key": "must-not-appear-in-worker-tags",
+        })
+        self.assertNotIn("must-not-appear-in-worker-tags", fingerprint)
+        self.assertEqual(len(fingerprint), 64)
+
     def test_duplicate_request_for_same_configuration_is_coalesced(self):
         first = self.gate.begin("xkiro", "key-a/model-a")
         second = self.gate.begin("xkiro", "key-a/model-a")
