@@ -1,3 +1,6 @@
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -6,6 +9,25 @@ from actions import game_updater as game_module
 
 
 class GameUpdaterSafetyTests(unittest.TestCase):
+    def test_script_bootstraps_project_imports_when_launched_outside_repo(self):
+        script_path = Path(game_module.__file__).resolve()
+        with tempfile.TemporaryDirectory() as working_dir:
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            result = subprocess.run(
+                [os.sys.executable, str(script_path)],
+                cwd=working_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"Direct scheduled-script startup failed:\n{result.stdout}\n{result.stderr}",
+        )
+
     def test_windows_schedule_never_runs_elevated_or_as_system(self):
         fake_result = type("Result", (), {"returncode": 0, "stderr": ""})()
         with (
