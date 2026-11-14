@@ -610,6 +610,10 @@ class JarvisLive:
         # Push-to-talk
         self._ptt_enabled          = False
         self._ptt_held             = False
+        # Serialises microphone callback enqueues with PTT release barriers.
+        # This guarantees the final held frame reaches the engine before STT
+        # flushes the buffered utterance.
+        self._ptt_queue_lock       = threading.Lock()
         self._ptt                  = None    # core.hotkey.PushToTalk
         self._out_level            = 0.0     # level of the audio being played right now
         self._echo                 = EchoGuard()
@@ -1015,7 +1019,8 @@ class JarvisLive:
         from core.hotkey import PushToTalk
 
         self._ptt_enabled = bool(enabled)
-        self._ptt_held = False
+        with self._ptt_queue_lock:
+            self._ptt_held = False
         if not enabled:
             if self._ptt is not None:
                 self._ptt.stop()
@@ -1039,7 +1044,12 @@ class JarvisLive:
 
     def _on_ptt(self, held: bool) -> None:
         """Chord pressed or released — may arrive on the hotkey thread."""
-        self._ptt_held = held
+        engine_to_flush = None
+        with self._ptt_queue_lock:
+            self._ptt_held = held
+            if not held:
+                engine_to_flush = self._engine
+
         if held:
             # Holding the key is also a way to wake it, so push-to-talk works
             # without having to say the wake word first.
@@ -1051,12 +1061,20 @@ class JarvisLive:
         # signal — which is also why it is the more reliable of the two ways to
         # talk to one. Scheduled onto the loop because this may arrive on the
         # hotkey thread.
-        if not held and self._engine is not None and self._loop is not None:
+        if not held and engine_to_flush is not None and self._loop is not None:
             try:
+                # Put the flush marker onto the SAME queue as mic frames. The
+                # sender consumes the queue in order, so no frame that was
+                # captured before key release can arrive after STT has flushed.
+                async def _queue_flush_barrier():
+                    if self.out_queue is not None:
+                        await self.out_queue.put({
+                            "_flush_pipeline_turn": engine_to_flush
+                        })
                 asyncio.run_coroutine_threadsafe(
-                    self._engine.flush_microphone(SEND_SAMPLE_RATE), self._loop)
+                    _queue_flush_barrier(), self._loop)
             except Exception as e:
-                print(f"[MINDER] PTT flush failed: {e}")
+                print(f"[MINDER] PTT flush scheduling failed: {e}")
         try:
             if held:
                 state = "LISTENING"
@@ -1514,6 +1532,15 @@ class JarvisLive:
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
+            # PTT release enters the queue behind every microphone frame that
+            # was accepted while the chord was held. Flush only after the sender
+            # has delivered all of them to the pipeline engine.
+            if isinstance(msg, dict) and "_flush_pipeline_turn" in msg:
+                engine = msg.get("_flush_pipeline_turn")
+                if engine is not None:
+                    await engine.flush_microphone(SEND_SAMPLE_RATE)
+                continue
+
             # Gemini 3.x Live rejects the old realtime_input.media_chunks field
             # (what `media=...` maps to) and closes the socket with a 1007. Send
             # mic / phone PCM through the new `audio` field instead. Queue items
@@ -1587,15 +1614,18 @@ class JarvisLive:
             # When it is on the microphone is closed by default and the chord
             # opens it, which is the whole point: nothing leaves the machine
             # unless you are holding the key.
-            if self._ptt_enabled and not self._ptt_held:
-                return
-            
             if not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
+                with self._ptt_queue_lock:
+                    # Test and enqueue under the same lock used by the hotkey
+                    # callback. A release cannot place its flush barrier ahead
+                    # of a frame that already passed this check.
+                    if self._ptt_enabled and not self._ptt_held:
+                        return
+                    loop.call_soon_threadsafe(
+                        self.out_queue.put_nowait,
+                        {"data": data, "mime_type": "audio/pcm"}
+                    )
                 # Feed the live mic level to the HUD so the waveform reacts to
                 # the user's actual voice while listening. Purely cosmetic — any
                 # failure here must never disturb the mic.
