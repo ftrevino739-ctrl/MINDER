@@ -1054,8 +1054,7 @@ class JarvisLive:
 
         return enqueue_microphone_frame(
             self._loop, self.out_queue, self._ptt_queue_lock,
-            ptt_enabled=self._ptt_enabled,
-            ptt_held=self._ptt_held,
+            ptt_state=lambda: (self._ptt_enabled, self._ptt_held),
             data=data,
             mime_type=mime_type,
         )
