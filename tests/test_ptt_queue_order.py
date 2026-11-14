@@ -54,7 +54,7 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
         for frame in frames:
             accepted = enqueue_microphone_frame(
                 loop, queue, lock,
-                ptt_enabled=True, ptt_held=True,
+                ptt_state=lambda: (True, True),
                 data=frame,
             )
             self.assertTrue(accepted)
@@ -78,7 +78,7 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
 
         self.assertFalse(enqueue_microphone_frame(
             loop, queue, lock,
-            ptt_enabled=True, ptt_held=False,
+            ptt_state=lambda: (True, False),
             data=b"late frame",
         ))
 
