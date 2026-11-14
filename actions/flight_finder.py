@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from config import is_windows, is_mac, is_linux
+# Initialize safe Unicode logging for legacy Windows console code pages.
+import core
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
