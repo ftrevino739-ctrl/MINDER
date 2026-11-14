@@ -18,12 +18,15 @@ class CodeHelperSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as outside:
             path = Path(outside) / "secret.py"
             path.write_text("private", encoding="utf-8")
-            text, error = code_helper._read_file(str(path))
-            self.assertEqual(text, "")
-            self.assertIn("Access denied", error)
-            result = code_helper._save_file(path, "replacement")
-            self.assertIn("status=failed", result)
-            self.assertEqual(path.read_text(encoding="utf-8"), "private")
+            synthetic_home = Path(outside) / "allowed-home"
+            synthetic_home.mkdir()
+            with patch.object(code_helper.Path, "home", return_value=synthetic_home):
+                text, error = code_helper._read_file(str(path))
+                self.assertEqual(text, "")
+                self.assertIn("Access denied", error)
+                result = code_helper._save_file(path, "replacement")
+                self.assertIn("status=failed", result)
+                self.assertEqual(path.read_text(encoding="utf-8"), "private")
 
     def test_new_file_is_created_exclusively(self):
         with self._home_temp() as folder:
@@ -73,7 +76,10 @@ class CodeHelperSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as outside:
             path = Path(outside) / "script.py"
             path.write_text("print('no')", encoding="utf-8")
+            synthetic_home = Path(outside) / "allowed-home"
+            synthetic_home.mkdir()
             with (
+                patch.object(code_helper.Path, "home", return_value=synthetic_home),
                 patch.object(code_helper.confirm, "request") as request,
                 patch.object(code_helper.subprocess, "run") as run,
             ):
