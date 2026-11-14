@@ -63,7 +63,7 @@ def _provider_report() -> None:
                 detail += " / incomplete service id"
             if key_present:
                 detail += " / API key: configured (value hidden)"
-            elif settings.get("base_url", "").startswith(("http://localhost", "http://127.0.0.1")):
+            elif str(settings.get("base_url") or "").startswith(("http://localhost", "http://127.0.0.1")):
                 detail += " / local endpoint (no key shown)"
             else:
                 detail += " / API key: not detected"
