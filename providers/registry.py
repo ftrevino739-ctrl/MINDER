@@ -25,6 +25,7 @@ WHERE THE SETTINGS LIVE
 from __future__ import annotations
 
 import importlib
+import threading
 from typing import Any, Optional
 
 from .base import Field, caps_of, validate
@@ -42,6 +43,7 @@ _MODULES: dict[str, tuple[str, ...]] = {
 _declarations: dict[str, dict] = {}     # id -> PROVIDER, for modules imported so far
 _instances: dict[str, Any] = {}         # id -> built provider, keyed by config
 _failed: dict[str, str] = {}            # module name -> why it would not import
+_instances_lock = threading.RLock()  # prevent two workers loading the same heavy model
 
 
 def _load(module_name: str) -> Optional[dict]:
@@ -131,37 +133,35 @@ def _fingerprint(provider_id: str, cfg: dict) -> str:
 
 
 def build(provider_id: str, cfg: dict):
-    """A live provider, built once per distinct configuration.
+    """Build one provider instance per config, serialising concurrent first use.
 
-    Cached because a provider may hold something expensive — a loaded speech
-    model is hundreds of megabytes and takes seconds to bring up, and rebuilding
-    it per request would make local mode unusable. The cache key is the
-    configuration itself, so changing the model in the panel produces a new
-    instance rather than silently reusing the old one.
+    Whisper and Piper can load hundreds of megabytes of model weights. The
+    settings panel may TEST a provider at the same time the conversation starts;
+    without this lock both paths can miss the cache and load two copies.
     """
     key = _fingerprint(provider_id, cfg)
-    if key in _instances:
-        return _instances[key]
+    with _instances_lock:
+        if key in _instances:
+            return _instances[key]
 
-    decl = get_declaration(provider_id)
-    if decl is None:
-        raise LookupError(f"no provider called {provider_id!r}")
-    if not decl.get("_available", True):
-        missing = ", ".join(decl.get("requires", ()))
-        raise RuntimeError(f"{decl['label']} needs {missing}, which is not installed")
+        decl = get_declaration(provider_id)
+        if decl is None:
+            raise LookupError(f"no provider called {provider_id!r}")
+        if not decl.get("_available", True):
+            missing = ", ".join(decl.get("requires", ()))
+            raise RuntimeError(f"{decl['label']} needs {missing}, which is not installed")
 
-    inst = decl["factory"](cfg)
-    if not hasattr(inst, "caps"):
-        inst.caps = caps_of(decl)
-    _instances[key] = inst
-    return inst
+        inst = decl["factory"](cfg)
+        if not hasattr(inst, "caps"):
+            inst.caps = caps_of(decl)
+        _instances[key] = inst
+        return inst
 
 
 def reset() -> None:
-    """Drop every built provider. Called when the panel applies a change, so a
-    new setting takes effect without a restart — the same promise the voice and
-    audio-device pickers already make."""
-    _instances.clear()
+    """Drop every built provider after an explicit settings change."""
+    with _instances_lock:
+        _instances.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
