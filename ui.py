@@ -3861,6 +3861,14 @@ class ProvidersOverlay(_HudOverlay):
     def _apply(self) -> None:
         from memory.config_manager import save_providers
 
+        # A probe may still be running with the old key/model while the user
+        # applies new settings. Invalidate its callback before saving so an old
+        # result cannot write stale vision metadata into the new configuration.
+        for pid in list(self._probe_generation):
+            self._probe_generation[pid] += 1
+        for pid in list(self._list_generation):
+            self._list_generation[pid] += 1
+
         # ONE write, not five. See save_providers for what the five cost.
         creds = {sid: self._values(sid) for sid in list(self._edits)}
 
