@@ -113,7 +113,7 @@ class ProviderDiagnosticsTests(unittest.TestCase):
     def test_registry_reset_does_not_wait_for_a_model_factory(self):
         started = threading.Event()
         release = threading.Event()
-        instance = object()
+        instance = FakeProvider(None, {})
 
         def slow_factory(_cfg):
             started.set()
@@ -155,7 +155,7 @@ class ProviderDiagnosticsTests(unittest.TestCase):
 
     def test_concurrent_provider_build_loads_a_heavy_instance_only_once(self):
         calls = []
-        instance = object()
+        instance = FakeProvider(None, {})
 
         def factory(_cfg):
             calls.append(threading.get_ident())
