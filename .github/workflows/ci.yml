@@ -46,6 +46,10 @@ jobs:
         run: python minder_doctor.py
       - name: Smoke-test application import on Windows
         run: python -c "import main; print('MINDER main module import OK')"
+      - name: Smoke-test real Qt desktop window on Windows
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python minder_ui_check.py
       - name: Run unit and safety tests on Windows
         env:
           QT_QPA_PLATFORM: offscreen
