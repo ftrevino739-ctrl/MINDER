@@ -1414,14 +1414,11 @@ class _CameraPreview(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            _CameraPreview {{
-                background: rgba(0, 6, 10, 242);
-                border: 1px solid {C.PRI};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(
+            self, radius=16,
+            background="rgba(20, 30, 44, 236)",
+            border=C.PRI,
+        )
         self.setFixedWidth(self._W)
 
         lay = QVBoxLayout(self)
@@ -1705,14 +1702,7 @@ class CustomizeOverlay(QWidget):
     def __init__(self, assistant_name="MINDER", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            CustomizeOverlay {{
-                background: rgba(23, 32, 46, 232);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=20)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 18, 24, 18)
         lay.setSpacing(8)
