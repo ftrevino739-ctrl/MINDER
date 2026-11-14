@@ -101,23 +101,33 @@ class PushToTalk:
     # ── lifecycle ───────────────────────────────────────────────────────────
 
     def start(self) -> str:
-        """Begin watching. Returns the scope actually achieved."""
+        """Begin watching. Every run owns its stop event."""
         self.stop()
-        self._stop.clear()
+        stop_event = threading.Event()
+        self._stop = stop_event
         if _OS == "Windows" and self._can_poll():
             self._scope = "global"
-            self._thread = threading.Thread(
-                target=self._poll_loop, name="push-to-talk", daemon=True)
-            self._thread.start()
+            thread = threading.Thread(
+                target=self._poll_loop, args=(stop_event,),
+                name="push-to-talk", daemon=True)
+            self._thread = thread
+            try:
+                thread.start()
+            except Exception:
+                if self._thread is thread:
+                    self._thread = None
+                    self._scope = "window"
+                return "window"
         else:
             self._scope = "window"
         return self._scope
 
     def stop(self) -> None:
-        self._stop.set()
-        t, self._thread = self._thread, None
-        if t is not None and t.is_alive():
-            t.join(timeout=1.0)
+        stop_event = self._stop
+        stop_event.set()
+        thread, self._thread = self._thread, None
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
         self._set_held(False)
 
     # ── the windowed fallback drives this directly ──────────────────────────
@@ -145,29 +155,33 @@ class PushToTalk:
         except Exception:
             pass          # a listener fault must never kill the watcher
 
-    def _poll_loop(self) -> None:
+    def _poll_loop(self, stop_event: threading.Event) -> None:
         import ctypes
         user32 = ctypes.windll.user32
         codes = [_VK[k] for k in self._chord]
         period = 1.0 / _POLL_HZ
         down_since = 0.0
 
-        while not self._stop.is_set():
-            try:
-                # The high bit of the return value is "currently down".
-                down = all(user32.GetAsyncKeyState(c) & 0x8000 for c in codes)
-            except Exception:
-                break     # driver or session teardown — fall back to windowed
-            now = time.monotonic()
-            if down:
-                if down_since == 0.0:
-                    down_since = now
-                elif now - down_since >= _DEBOUNCE_S:
-                    self._set_held(True)
-            else:
-                down_since = 0.0
+        try:
+            while not stop_event.is_set():
+                try:
+                    # The high bit of the return value is "currently down".
+                    down = all(user32.GetAsyncKeyState(c) & 0x8000 for c in codes)
+                except Exception:
+                    break     # driver or session teardown — fall back to windowed
+                now = time.monotonic()
+                if down:
+                    if down_since == 0.0:
+                        down_since = now
+                    elif now - down_since >= _DEBOUNCE_S:
+                        self._set_held(True)
+                else:
+                    down_since = 0.0
+                    self._set_held(False)
+                stop_event.wait(period)
+        finally:
+            # A stopped worker may outlive its bounded join. It must not clear
+            # the held/scope state of a newer polling session.
+            if self._stop is stop_event:
                 self._set_held(False)
-            self._stop.wait(period)
-
-        self._set_held(False)
-        self._scope = "window"
+                self._scope = "window"
