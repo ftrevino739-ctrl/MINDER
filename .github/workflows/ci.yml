@@ -38,6 +38,8 @@ jobs:
           python -m pip install -r requirements.txt
       - name: Compile Python sources on Windows
         run: python -m compileall -q .
+      - name: Run read-only MINDER environment doctor
+        run: python minder_doctor.py
       - name: Run unit and safety tests on Windows
         env:
           QT_QPA_PLATFORM: offscreen
