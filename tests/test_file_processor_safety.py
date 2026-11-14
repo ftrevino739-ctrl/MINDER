@@ -103,7 +103,10 @@ class FileProcessorSafetyTests(unittest.TestCase):
             archive_path = root / "bundle.zip"
             with zipfile.ZipFile(archive_path, "w") as archive:
                 archive.writestr("readme.txt", "hello")
-            with patch.object(module.confirm, "request") as request:
+            with (
+                patch.object(module.Path, "home", return_value=root),
+                patch.object(module.confirm, "request") as request,
+            ):
                 refused = module._process_archive(
                     archive_path, "extract", {"destination": str(Path(outside) / "out")}
                 )
