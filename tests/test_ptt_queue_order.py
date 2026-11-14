@@ -82,6 +82,28 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
             data=b"late frame",
         ))
 
+    def test_bounded_queue_overflow_is_reported_without_raising_on_loop(self):
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        self.addCleanup(self._stop_loop, loop, thread)
+
+        queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait({"data": b"already queued", "mime_type": "audio/pcm"})
+        lock = threading.Lock()
+        overflow = threading.Event()
+
+        accepted = enqueue_microphone_frame(
+            loop, queue, lock,
+            ptt_state=lambda: (False, False),
+            data=b"new microphone frame",
+            on_overflow=overflow.set,
+        )
+        self.assertTrue(accepted, "frame should be scheduled for the event loop")
+        self.assertTrue(overflow.wait(timeout=2),
+                        "full queue should report the dropped frame")
+        self.assertEqual(queue.qsize(), 1)
+
     @staticmethod
     def _cancel_sender(sender):
         if sender.done():
