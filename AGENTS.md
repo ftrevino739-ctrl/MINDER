@@ -94,6 +94,15 @@ a small built-in fallback — instead of crashing.
   `_show_content` is the pattern to copy.
 - Colours come from the `C` palette class; fonts are `QFont("Courier New", size)`.
 
+## Persistent memory
+
+`memory/memory_manager.py` is the owner of `memory/long_term.json`.
+
+- Use `update_memory()`, `remember()`, `forget()`, `save_session_summary()` and `pop_last_session()`; do not write the memory JSON from another module.
+- Read-modify-write operations must hold the module's re-entrant `_lock` for the whole transaction.
+- Persist snapshots through `_write_memory_file()`, which writes a same-directory temporary file and uses `os.replace`. Do not replace this with a direct `write_text()`.
+- Keep API keys, access tokens, recordings and unrelated private data out of long-term memory and test fixtures.
+
 ## General
 
 - Never send a child process's output to `DEVNULL` without logging it, and
