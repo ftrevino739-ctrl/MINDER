@@ -17,8 +17,9 @@ def main() -> int:
     root = Path(__file__).resolve().parent
     sys.path.insert(0, str(root))
 
+    from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
-    from ui import JarvisUI
+    from ui import ConfirmBanner, JarvisUI, PluginManagerOverlay
 
     ui = None
     app = None
@@ -44,10 +45,32 @@ def main() -> int:
         if window.hud.state != "LISTENING":
             raise RuntimeError("Thread-safe HUD state update was not delivered")
 
+        # Instantiate representative frosted-glass overlays without opening
+        # devices, reading user memory, enabling plugins or taking any action.
+        glass_panels = [
+            PluginManagerOverlay([], parent=window.centralWidget()),
+            ConfirmBanner("Smoke test", "No action is attached.",
+                          parent=window.centralWidget()),
+        ]
+        for panel in glass_panels:
+            if panel.objectName() != "minderGlassSurface":
+                raise RuntimeError(
+                    f"{type(panel).__name__} did not receive the glass surface")
+            if not panel.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground):
+                raise RuntimeError(
+                    f"{type(panel).__name__} is not configured as translucent")
+            if panel.graphicsEffect() is None:
+                raise RuntimeError(
+                    f"{type(panel).__name__} is missing its depth shadow")
+            panel.close()
+            panel.deleteLater()
+        app.processEvents()
+
         print(f"[OK] Qt application: {QApplication.instance() is app}")
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
         print("[OK] Queued state update: delivered")
+        print("[OK] Plugin and confirmation glass overlays: constructed")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
         return 0
     finally:
