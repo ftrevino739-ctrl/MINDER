@@ -102,6 +102,9 @@ def main() -> int:
             if panel.graphicsEffect() is None:
                 raise RuntimeError(
                     f"{type(panel).__name__} is missing its depth shadow")
+            countdown = getattr(panel, "_ctimer", None)
+            if countdown is not None:
+                countdown.stop()
             panel.close()
             panel.deleteLater()
         app.processEvents()
