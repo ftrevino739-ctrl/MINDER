@@ -19,6 +19,14 @@ of routine work. The product and all new user-facing identity must be MINDER.
 
 ## Threading: the rule that breaks most generated code
 
+The Qt main thread must never wait for network calls, provider probes, voice
+catalogue requests, model downloads, local model loading, speech synthesis, or
+other potentially slow work. Capture widget values first, run the work on a
+worker thread, and return only plain result data through a `pyqtSignal` or a
+queued Qt callback. Apply results on the Qt thread and discard stale results
+when the settings changed while the worker was running. Do not call
+`QApplication.processEvents()` as a way to hide a blocking operation.
+
 Code in `actions/` and `plugins/` must **never create or touch a Qt widget**.
 That means no `QApplication`, `QWidget`, `QMainWindow`, `QDialog`, `QThread` or
 anything else from `PyQt6.QtWidgets` or `PyQt6.QtGui`. Creating a widget from a
@@ -67,14 +75,21 @@ A plugin is one file `plugins/<name>.py` (no leading underscore) with:
 Helper modules may live beside it with a leading underscore
 (`plugins/_helper.py`); the loader skips those. See `plugins/_template.py`.
 
-A new plugin is **enabled automatically** the moment its file exists — nothing
-needs to be registered or switched on. Never edit `config/api_keys.json` to
-"enable" one; that file holds the user's API keys and settings.
+A plugin is **OFF by default**. Adding a file does not authorise it to run.
+The user must enable it in PLUGIN MANAGER after reviewing the source. The
+approved SHA-256 is bound to that exact source; editing the file invalidates the
+approval and requires a new review. Never edit `config/api_keys.json` directly
+to "enable" one — use the config manager and the existing per-source approval
+flow. Never weaken the default-OFF or hash-matching checks to make a test pass.
 
 ## Asking a model for something
 
-Always go through `core.gemini` — it has deadlines, a fallback ladder and the
-user's chosen provider:
+For model calls originating in actions and helpers, use the established
+`core.gemini` compatibility facade rather than constructing an unbounded client.
+In **MY OWN SETUP** mode it routes to the configured provider pipeline; in
+**GEMINI LIVE** mode it uses Gemini. A provider error must never silently switch
+to Gemini or another vendor, and audio/screen data must not be sent to a
+different provider than the user selected:
 
 ```python
 from core import gemini
