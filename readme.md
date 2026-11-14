@@ -32,8 +32,9 @@ Before opening the assistant, you can run the read-only diagnostics command:
 ```
 
 It checks the Python/dependency environment, installed HUD asset, configured provider IDs,
-and visible default audio devices. It never records audio, makes network requests, changes
-settings, or prints API-key values. A successful report is only a basic environment check;
+visible default audio devices, and whether Playwright's Chromium and Firefox executables are
+installed. The browser check does not launch a browser, download files, or contact a website.
+The doctor never records audio, makes network requests, changes settings, or prints API-key values. A successful report is only a basic environment check;
 it does not replace the real Windows acceptance checklist in `MINDER_SECURITY_REVIEW.md`.
 
 The setup script installs the dependencies listed in `requirements.txt` and attempts to install the Chromium and Firefox browsers used by browser automation. The browser download is non-fatal; it can be retried later with:
@@ -76,7 +77,7 @@ Only the template is shipped. Plugins discovered in `plugins/` remain OFF until 
 
 ## Tests and verification
 
-The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs the standard-library regression suite, and runs the Qt-offscreen provider regression suite. The safety tests cover human approvals and concurrency, browser URL restrictions and unsaved forms, risky desktop input, desktop file organization, file deletion and Trash approval, Steam/Epic update and scheduler approval, Linux brightness command construction, DevAgent project paths and command execution, code-helper file access and execution, file-processor outputs, Python execution and archive extraction. These tests use mocks for operating-system actions; they do not prove that the target Windows desktop, browser, microphone or speakers work. The suite also verifies that provider-pipeline one-shot requests, coding calls and visual screen lookup do not silently fall back to Gemini. Plugin discovery inspects literal metadata without executing modules, defaults third-party plugins to OFF, and pins explicit activation to the approved SHA-256 source. Reminder and report outputs are created with unique names rather than overwriting an earlier same-time file.
+The GitHub Actions workflow checks Python syntax on Python 3.11, 3.12 and 3.13, runs the standard-library regression suite, and runs the Qt-offscreen provider regression suite. The safety tests cover human approvals and concurrency, browser URL restrictions and unsaved forms, risky desktop input, desktop file organization, file deletion and Trash approval, Steam/Epic update and scheduler approval, Linux brightness command construction, DevAgent project paths and command execution, code-helper file access and execution, file-processor outputs, Python execution and archive extraction. These tests use mocks for operating-system actions; they do not prove that the target Windows desktop, browser, microphone or speakers work. The suite also verifies that provider-pipeline one-shot requests, coding calls and visual screen lookup do not silently fall back to Gemini. Audio-device regression tests cover cache invalidation, callback-based microphone transport, clock-paced speaker transport, and failed-probe caching; they use mocks and do not test physical audio hardware. Plugin discovery inspects literal metadata without executing modules, defaults third-party plugins to OFF, and pins explicit activation to the approved SHA-256 source. Reminder and report outputs are created with unique names rather than overwriting an earlier same-time file.
 
 After installing the application dependencies, the provider package also has a local regression suite:
 
