@@ -54,6 +54,7 @@ Target development machine: Windows 11 with 8 GB RAM.
 - The built-in `send_message` action now parks sends behind `core.confirm.request`, displays the exact platform, recipient and complete message in a scrollable review area, refuses oversized messages or requests when the UI is unavailable, and reports actual delivery status separately from approval. Five regression tests cover the gate and its fail-closed behavior.
 - External-action audit now also covers app URI schemes, reminder-task collisions, report output overwrites, provider-routed screenshot lookup and third-party plugin execution. Plugins are inspected without execution and require per-source hash approval before first use. Steam account selection and install-dialog clicks remain manual. See [MINDER_SECURITY_REVIEW.md](MINDER_SECURITY_REVIEW.md) for exact coverage and the Windows acceptance gate.
 - The application has not yet been run or validated on the target Windows PC. Passing CI is not proof that the Windows app launches or that the user's microphone, speakers, browser and desktop actions work.
+- Added a read-only `minder_doctor.py` command for local environment, dependency, provider-selection and audio-device diagnostics. It never records audio, makes network requests, changes settings or prints API-key values. The Windows CI job now installs the declared Windows requirements, compiles the project, runs the doctor and executes the full unit/safety suite on `windows-latest`; its first run is pending.
 
 ## Working rules
 
