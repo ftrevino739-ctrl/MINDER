@@ -170,6 +170,8 @@ class PushToTalk:
                     down = all(user32.GetAsyncKeyState(c) & 0x8000 for c in codes)
                 except Exception:
                     break     # driver or session teardown — fall back to windowed
+                if stop_event.is_set():
+                    break
                 now = time.monotonic()
                 if down:
                     if down_since == 0.0:
