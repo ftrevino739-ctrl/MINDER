@@ -119,20 +119,27 @@ class C:
     BAR_BG    = "#1b2a3b"
 
 
-def _apply_glass_surface(widget: QWidget, radius: int = 18) -> None:
+def _apply_glass_surface(
+    widget: QWidget,
+    radius: int = 18,
+    *,
+    background: str = "rgba(23, 32, 46, 232)",
+    border: str = "rgba(220, 236, 252, 72)",
+) -> None:
     """Give a floating panel a restrained frosted-glass surface and depth.
 
     The translucent fill lets the HUD remain subtly visible behind the panel;
-    the shadow is deliberately soft so the overlay reads as a separate layer
-    without looking like a neon frame.
+    the shadow is deliberately soft so the overlay reads as a separate layer.
+    Optional surface colours let safety-critical panels preserve their meaning
+    without falling back to the old opaque, square-edged treatment.
     """
     widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
     widget.setObjectName("minderGlassSurface")
     widget.setStyleSheet(f"""
         QWidget#minderGlassSurface {{
-            background: rgba(23, 32, 46, 232);
-            border: 1px solid rgba(220, 236, 252, 72);
+            background: {background};
+            border: 1px solid {border};
             border-radius: {radius}px;
         }}
     """)
@@ -1914,14 +1921,7 @@ class PluginManagerOverlay(QWidget):
 
     def __init__(self, plugins: list[dict], parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            PluginManagerOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=18)
         self.setFixedWidth(self._OW)
 
         lay = QVBoxLayout(self)
@@ -2058,14 +2058,11 @@ class ConfirmBanner(_HudOverlay):
 
     def __init__(self, title: str, detail: str, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            ConfirmBanner {{
-                background: rgba(14, 3, 0, 250);
-                border: 1px solid {C.ACC};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(
+            self, radius=18,
+            background="rgba(38, 20, 18, 238)",
+            border=C.ACC,
+        )
         self.setFixedWidth(self._OW)
 
         lay = QVBoxLayout(self)
@@ -2186,14 +2183,7 @@ class AudioDeviceOverlay(_HudOverlay):
         from core.audio_devices import list_devices, DEFAULT_LABEL
         from memory.config_manager import get_input_device, get_output_device
 
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            AudioDeviceOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=18)
         self.setFixedWidth(self._OW)
 
         lay = QVBoxLayout(self)
@@ -2525,14 +2515,7 @@ class MemoryOverlay(_HudOverlay):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            MemoryOverlay {{
-                background: rgba(0, 6, 10, 246);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=18)
         self.setFixedWidth(self._OW)
 
         self._lay = QVBoxLayout(self)
