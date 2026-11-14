@@ -23,7 +23,7 @@ def main() -> int:
     from ui import (
         AudioDeviceOverlay, ClipboardPanel, ConfirmBanner, CustomizeOverlay,
         JarvisUI, MemoryOverlay, PluginManagerOverlay, PluginSettingsOverlay,
-        _CameraPreview,
+        RemoteKeyOverlay, _CameraPreview,
     )
 
     ui = None
@@ -58,6 +58,11 @@ def main() -> int:
             CustomizeOverlay(parent=window.centralWidget()),
             ClipboardPanel(parent=window.centralWidget()),
             _CameraPreview(parent=window.centralWidget()),
+            RemoteKeyOverlay(
+                "http://127.0.0.1:8765", "smoke-token",
+                auto_login_url="http://127.0.0.1:8765/?smoke=1",
+                expiry_secs=600, parent=window.centralWidget(),
+            ),
             ConfirmBanner("Smoke test", "No action is attached.",
                           parent=window.centralWidget()),
         ]
@@ -99,7 +104,7 @@ def main() -> int:
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
         print("[OK] Queued state update: delivered")
-        print("[OK] Eight glass overlays: constructed with safe fixtures")
+        print("[OK] Nine glass overlays: constructed with safe fixtures")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
         return 0
     finally:
