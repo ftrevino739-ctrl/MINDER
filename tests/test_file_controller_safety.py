@@ -42,7 +42,7 @@ class FileControllerSafetyTests(unittest.TestCase):
             gate.assert_called_once()
             trash.assert_not_called()
             self.assertTrue(target.exists())
-            self.assertIn(str(target), captured["detail"])
+            self.assertIn(str(target.resolve()), captured["detail"])
             self.assertIn("not permanently erase", captured["detail"])
             moved = captured["run"]()
             self.assertIn("Moved to Trash", moved)
