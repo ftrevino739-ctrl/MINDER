@@ -44,20 +44,30 @@ def schedule_flush_barrier(
     loop: asyncio.AbstractEventLoop,
     queue: asyncio.Queue,
     engine: Any,
-) -> Future | None:
-    """Enqueue a flush marker after preceding frame callbacks.
+) -> None:
+    """Schedule a flush marker after preceding frame callbacks.
 
     The caller must hold the same lock used by enqueue_microphone_frame while
-    scheduling this barrier. Its coroutine uses awaited queue.put(), so a full
-    queue cannot silently drop the end-of-utterance marker.
+    scheduling this marker. It is inserted synchronously on the event-loop
+    thread, before later PTT presses can schedule another frame. If the bounded
+    queue is full, a waiter preserves the marker rather than dropping the turn
+    boundary.
     """
     if loop is None or queue is None or engine is None or loop.is_closed():
-        return None
+        return
 
-    async def _put():
-        await queue.put({"_flush_pipeline_turn": engine})
+    marker = {"_flush_pipeline_turn": engine}
 
-    return asyncio.run_coroutine_threadsafe(_put(), loop)
+    def _insert_marker():
+        try:
+            queue.put_nowait(marker)
+        except asyncio.QueueFull:
+            # A full queue already means new microphone callbacks cannot safely
+            # enqueue with put_nowait. Register the boundary as the first async
+            # put waiter so it survives backpressure.
+            asyncio.create_task(queue.put(marker))
+
+    loop.call_soon_threadsafe(_insert_marker)
 
 
 async def relay_outbound_audio(
