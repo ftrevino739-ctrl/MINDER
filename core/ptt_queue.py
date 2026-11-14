@@ -17,8 +17,7 @@ def enqueue_microphone_frame(
     queue: asyncio.Queue,
     lock: threading.Lock,
     *,
-    ptt_enabled: bool,
-    ptt_held: bool,
+    ptt_state: Callable[[], tuple[bool, bool]],
     data: bytes,
     mime_type: str = "audio/pcm",
 ) -> bool:
@@ -31,6 +30,9 @@ def enqueue_microphone_frame(
     if loop is None or queue is None or loop.is_closed():
         return False
     with lock:
+        # Read the state only after taking the lock. Passing pre-read booleans
+        # allowed a callback to carry a stale "held" value across key release.
+        ptt_enabled, ptt_held = ptt_state()
         if ptt_enabled and not ptt_held:
             return False
         loop.call_soon_threadsafe(
