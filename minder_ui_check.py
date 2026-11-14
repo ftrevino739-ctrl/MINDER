@@ -19,7 +19,10 @@ def main() -> int:
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
-    from ui import ConfirmBanner, JarvisUI, PluginManagerOverlay
+    from ui import (
+        ClipboardPanel, ConfirmBanner, JarvisUI,
+        PluginManagerOverlay, PluginSettingsOverlay,
+    )
 
     ui = None
     app = None
@@ -49,6 +52,8 @@ def main() -> int:
         # devices, reading user memory, enabling plugins or taking any action.
         glass_panels = [
             PluginManagerOverlay([], parent=window.centralWidget()),
+            PluginSettingsOverlay([], parent=window.centralWidget()),
+            ClipboardPanel(parent=window.centralWidget()),
             ConfirmBanner("Smoke test", "No action is attached.",
                           parent=window.centralWidget()),
         ]
@@ -70,7 +75,7 @@ def main() -> int:
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
         print("[OK] Queued state update: delivered")
-        print("[OK] Plugin and confirmation glass overlays: constructed")
+        print("[OK] Plugin, clipboard and confirmation glass overlays: constructed")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
         return 0
     finally:
