@@ -5,7 +5,26 @@ requests and reject results that belong to an older provider configuration.
 """
 from __future__ import annotations
 
+import json
 import threading
+
+
+_CATALOGUE_SELECTION_KEYS = frozenset({"model", "voice", "voice_id"})
+
+
+def catalogue_fingerprint(values: dict) -> str:
+    """Fingerprint settings that affect catalogue access, not selected output.
+
+    The currently selected model/voice is a choice made *from* the catalogue;
+    changing it must not force the application to fetch the same catalogue again.
+    Endpoint and credential changes still produce a new fingerprint.
+    """
+    relevant = {
+        str(key): value
+        for key, value in (values or {}).items()
+        if str(key) not in _CATALOGUE_SELECTION_KEYS
+    }
+    return json.dumps(relevant, sort_keys=True, ensure_ascii=False, default=str)
 
 
 class CatalogRequestGate:
