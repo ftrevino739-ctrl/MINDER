@@ -1,12 +1,41 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from providers.catalog_requests import CatalogRequestGate
+from providers.catalog_requests import CatalogRequestGate, catalogue_fingerprint
 
 
 class CatalogRequestGateTests(unittest.TestCase):
     def setUp(self):
         self.gate = CatalogRequestGate()
+
+    def test_model_selection_does_not_invalidate_the_model_catalogue(self):
+        original = {
+            "base_url": "https://api.example/v1",
+            "api_key": "secret-a",
+            "model": "model-a",
+        }
+        selected_another_model = dict(original, model="model-b")
+
+        self.assertEqual(
+            catalogue_fingerprint(original),
+            catalogue_fingerprint(selected_another_model),
+        )
+
+    def test_endpoint_or_credentials_change_invalidates_catalogue(self):
+        original = {
+            "base_url": "https://api.example/v1",
+            "api_key": "secret-a",
+            "model": "model-a",
+        }
+        changed_endpoint = dict(original, base_url="https://other.example/v1")
+        changed_key = dict(original, api_key="secret-b")
+
+        self.assertNotEqual(
+            catalogue_fingerprint(original), catalogue_fingerprint(changed_endpoint)
+        )
+        self.assertNotEqual(
+            catalogue_fingerprint(original), catalogue_fingerprint(changed_key)
+        )
 
     def test_duplicate_request_for_same_configuration_is_coalesced(self):
         first = self.gate.begin("xkiro", "key-a/model-a")
