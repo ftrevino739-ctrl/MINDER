@@ -128,7 +128,8 @@ class PushToTalk:
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=1.0)
-        self._set_held(False)
+        if self._stop is stop_event:
+            self._set_held(False)
 
     # ── the windowed fallback drives this directly ──────────────────────────
 
