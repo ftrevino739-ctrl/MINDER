@@ -25,6 +25,17 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
+Before opening the assistant, you can run the read-only diagnostics command:
+
+```powershell
+.\.venv\Scripts\python.exe minder_doctor.py
+```
+
+It checks the Python/dependency environment, installed HUD asset, configured provider IDs,
+and visible default audio devices. It never records audio, makes network requests, changes
+settings, or prints API-key values. A successful report is only a basic environment check;
+it does not replace the real Windows acceptance checklist in `MINDER_SECURITY_REVIEW.md`.
+
 The setup script installs the dependencies listed in `requirements.txt` and attempts to install the Chromium and Firefox browsers used by browser automation. The browser download is non-fatal; it can be retried later with:
 
 ```powershell
