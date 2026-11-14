@@ -6,6 +6,30 @@ from actions import game_updater as game_module
 
 
 class GameUpdaterSafetyTests(unittest.TestCase):
+    def test_windows_schedule_never_runs_elevated_or_as_system(self):
+        fake_result = type("Result", (), {"returncode": 0, "stderr": ""})()
+        with (
+            patch.object(game_module, "is_windows", return_value=True),
+            patch.object(game_module.subprocess, "run", return_value=fake_result) as run,
+        ):
+            result = game_module._schedule_windows(4, 15)
+        self.assertIn("scheduled at 04:15", result)
+        args = run.call_args.args[0]
+        self.assertIn("MINDER_GameUpdater", args)
+        self.assertNotIn("/RL", args)
+        self.assertNotIn("/RU", args)
+        self.assertNotIn("SYSTEM", args)
+
+    def test_windows_scheduler_uses_one_create_call_without_predeleting(self):
+        fake_result = type("Result", (), {"returncode": 0, "stderr": ""})()
+        with (
+            patch.object(game_module, "is_windows", return_value=True),
+            patch.object(game_module.subprocess, "run", return_value=fake_result) as run,
+        ):
+            game_module._schedule_windows(4, 15)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][1], "/Create")
+
     def test_install_requires_human_approval_before_execution(self):
         captured = {}
         params = {"action": "install", "platform": "steam", "game_name": "Example Game"}
