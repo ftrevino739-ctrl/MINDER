@@ -90,10 +90,14 @@ class AudioDeviceRegressionTests(unittest.TestCase):
         self.assertIsNone(audio_devices._cache)
 
     def test_input_transport_probe_uses_the_callback_stream_used_by_the_app(self):
-        stream = _InputStream()
-        fake_sd = types.SimpleNamespace(
-            InputStream=lambda **kwargs: stream,
-        )
+        streams = []
+
+        def build_stream(**kwargs):
+            stream = _InputStream(**kwargs)
+            streams.append(stream)
+            return stream
+
+        fake_sd = types.SimpleNamespace(InputStream=build_stream)
         with (
             patch.dict(sys.modules, {"sounddevice": fake_sd}),
             patch.object(audio_devices.time, "sleep", return_value=None),
@@ -102,15 +106,20 @@ class AudioDeviceRegressionTests(unittest.TestCase):
                 4, "input", ("directsound", "input"))
 
         self.assertTrue(ok)
-        self.assertTrue(stream.started)
-        self.assertTrue(stream.stopped)
-        self.assertTrue(stream.closed)
+        self.assertEqual(len(streams), 1)
+        self.assertTrue(streams[0].started)
+        self.assertTrue(streams[0].stopped)
+        self.assertTrue(streams[0].closed)
 
     def test_output_transport_probe_uses_raw_stream_and_checks_clocked_write(self):
-        stream = _OutputStream()
-        fake_sd = types.SimpleNamespace(
-            RawOutputStream=lambda **kwargs: stream,
-        )
+        streams = []
+
+        def build_stream(**kwargs):
+            stream = _OutputStream(**kwargs)
+            streams.append(stream)
+            return stream
+
+        fake_sd = types.SimpleNamespace(RawOutputStream=build_stream)
         with (
             patch.dict(sys.modules, {"sounddevice": fake_sd}),
             patch.object(audio_devices.time, "monotonic", side_effect=[1.0, 1.5]),
@@ -119,12 +128,13 @@ class AudioDeviceRegressionTests(unittest.TestCase):
                 8, "output", ("mme", "output"))
 
         self.assertTrue(ok)
-        self.assertEqual(stream.kwargs["device"], 8)
-        self.assertTrue(stream.started)
-        self.assertEqual(len(stream.written), int(
+        self.assertEqual(len(streams), 1)
+        self.assertEqual(streams[0].kwargs["device"], 8)
+        self.assertTrue(streams[0].started)
+        self.assertEqual(len(streams[0].written), int(
             audio_devices._RATES["output"] * audio_devices._PROBE_SECONDS["output"]) * 2)
-        self.assertTrue(stream.stopped)
-        self.assertTrue(stream.closed)
+        self.assertTrue(streams[0].stopped)
+        self.assertTrue(streams[0].closed)
 
     def test_failed_probe_result_is_cached_for_the_host_api(self):
         calls = []
