@@ -1042,6 +1042,26 @@ class JarvisLive:
             pass
         return scope
 
+    def _queue_mic_audio(self, data: bytes, mime_type: str = "audio/pcm") -> bool:
+        """Queue a microphone frame in order with PTT release barriers.
+
+        The hotkey and PortAudio callbacks run on different threads. This lock
+        makes their enqueue order explicit: frames accepted while the chord is
+        held are scheduled before the release marker, and later frames are
+        rejected.
+        """
+        loop, queue = self._loop, self.out_queue
+        if loop is None or queue is None:
+            return False
+        with self._ptt_queue_lock:
+            if self._ptt_enabled and not self._ptt_held:
+                return False
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {"data": bytes(data), "mime_type": mime_type},
+            )
+        return True
+
     def _on_ptt(self, held: bool) -> None:
         """Chord pressed or released — may arrive on the hotkey thread."""
         engine_to_flush = None
@@ -1616,16 +1636,7 @@ class JarvisLive:
             # unless you are holding the key.
             if not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
-                with self._ptt_queue_lock:
-                    # Test and enqueue under the same lock used by the hotkey
-                    # callback. A release cannot place its flush barrier ahead
-                    # of a frame that already passed this check.
-                    if self._ptt_enabled and not self._ptt_held:
-                        return
-                    loop.call_soon_threadsafe(
-                        self.out_queue.put_nowait,
-                        {"data": data, "mime_type": "audio/pcm"}
-                    )
+                self._queue_mic_audio(data, "audio/pcm")
                 # Feed the live mic level to the HUD so the waveform reacts to
                 # the user's actual voice while listening. Purely cosmetic — any
                 # failure here must never disturb the mic.
