@@ -2779,8 +2779,7 @@ class ProvidersOverlay(_HudOverlay):
     # for — the installed voices — has arrived. A signal rather than a direct
     # call because the worker must not touch a widget.
     _live_ready = pyqtSignal()
-    # (provider id, [(value, label), ...]) from a worker that went and asked an
-    # endpoint what it offers.
+    # (provider id, generation, config fingerprint, options) from a worker.
     _models_ready = pyqtSignal(str, int, str, object)
     # Provider tests and manual model/voice refreshes can perform network calls,
     # PowerShell synthesis or local model checks. Their results return as plain
@@ -3116,7 +3115,7 @@ class ProvidersOverlay(_HudOverlay):
         finally:
             box.blockSignals(previous)
         self._say(pid, f"{len(items)} model{'s' if len(items) != 1 else ''} "
-                       f"found on this server — pick one above.")
+                       f"found on this server — pick one above.", C.TEXT_DIM)
 
     def _set_mode(self, value: str) -> None:
         if value == self._mode:
