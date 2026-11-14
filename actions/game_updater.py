@@ -9,6 +9,13 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
+# Scheduled runs launch this file by absolute path from Task Scheduler, launchd,
+# or cron. In that mode Python puts actions/ (not the repository root) on
+# sys.path, and imports such as config/ and core/ fail unless we add the root.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from config import get_os, is_windows, is_mac, is_linux
 from core import confirm, outcome
 
