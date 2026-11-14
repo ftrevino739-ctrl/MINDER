@@ -2782,6 +2782,11 @@ class ProvidersOverlay(_HudOverlay):
     # (provider id, [(value, label), ...]) from a worker that went and asked an
     # endpoint what it offers.
     _models_ready = pyqtSignal(str, list)
+    # Provider tests and manual model/voice refreshes can perform network calls,
+    # PowerShell synthesis or local model checks. Their results return as plain
+    # data through these signals; workers never touch a QWidget.
+    _probe_ready = pyqtSignal(str, int, object)
+    _list_ready = pyqtSignal(str, int, object)
     _OW = 760                       # the window's own minimum is 820
 
     # Which provider fills each slot, and what the slot is FOR — in the words
@@ -2814,8 +2819,12 @@ class ProvidersOverlay(_HudOverlay):
         # nothing in this folder may run before somebody opens it.
         self._live_ready.connect(self._on_live_ready)
         self._models_ready.connect(self._on_models_ready)
+        self._probe_ready.connect(self._on_probe_ready)
+        self._list_ready.connect(self._on_list_ready)
         self._model_cache: dict[str, list] = {}
         self._fetching: set = set()
+        self._probe_generation: dict[str, int] = {}
+        self._list_generation: dict[str, int] = {}
         for _kind in ("tts", "stt", "llm"):
             for _decl in registry.discover(_kind):
                 try:
@@ -3699,29 +3708,55 @@ class ProvidersOverlay(_HudOverlay):
             lb.setText(text)
             lb.setStyleSheet(f"color: {colour}; background: transparent; border: none;")
 
+    @staticmethod
+    def _provider_values_fingerprint(values: dict) -> str:
+        return json.dumps(values or {}, sort_keys=True, ensure_ascii=False, default=str)
+
     def _test(self, pid: str) -> None:
-        # Read the boxes BEFORE letting Qt run. `processEvents` will happily
-        # deliver a queued rebuild, which deletes the very widgets this is
-        # about to read — and a deleted QWidget raises rather than returning
-        # something wrong, so it takes the click down with it.
-        values = self._values(pid)
-        self._say(pid, "checking…", C.TEXT_DIM)
-        QApplication.processEvents()
-        try:
-            inst = self._registry.build(pid, values)
-            probe = getattr(inst, "probe", None)
-            if probe is None:
-                self._say(pid, "Nothing to check for this one.", C.TEXT_DIM)
-                return
-            ok, msg = probe()
-        except Exception as e:
-            self._say(pid, f"✕  {type(e).__name__}: {str(e)[:150]}", C.RED)
+        """Probe a provider without freezing the settings window."""
+        import threading
+        from providers import diagnostics
+
+        values = self._values(pid)  # capture before the worker can start
+        self._say(pid, "checking in background…", C.TEXT_DIM)
+        generation = self._probe_generation.get(pid, 0) + 1
+        self._probe_generation[pid] = generation
+        fingerprint = self._provider_values_fingerprint(values)
+        registry = self._registry
+
+        def work():
+            result = diagnostics.probe_provider(registry, pid, values)
+            result["fingerprint"] = fingerprint
+            self._probe_ready.emit(pid, generation, result)
+
+        threading.Thread(target=work, daemon=True,
+                         name=f"provider-probe-{pid}").start()
+
+    def _on_probe_ready(self, pid: str, generation: int, result: dict) -> None:
+        """Apply a worker result on the Qt thread, ignoring stale results."""
+        if generation != self._probe_generation.get(pid):
             return
-        self._say(pid, ("✓  " if ok else "✕  ") + msg, C.GREEN if ok else C.ACC)
-        # TEST is also where "can this model see?" gets answered — by asking the
-        # endpoint, not the user. Write the answer back into the stored settings
-        # so the assistant is told the truth about its own eyes.
-        seen = (getattr(inst, "caps", {}) or {}).get("vision")
+        if pid not in self._status:
+            return
+        try:
+            current = self._provider_values_fingerprint(self._values(pid))
+        except Exception:
+            return
+        if result.get("fingerprint") != current:
+            self._say(pid, "settings changed — run TEST again.", C.TEXT_DIM)
+            return
+
+        ok = result.get("ok")
+        message = str(result.get("message") or "")
+        if ok is None:
+            self._say(pid, message, C.TEXT_DIM)
+            return
+        self._say(pid, ("✓  " if ok else "✕  ") + message,
+                  C.GREEN if ok else C.ACC)
+
+        # TEST also settles whether a model can see images. Save that answer
+        # only after a successful probe, and only on the Qt thread.
+        seen = result.get("vision")
         if ok and seen is not None:
             from memory.config_manager import save_provider_config
             save_provider_config(pid, {"vision": "1" if seen else ""})
@@ -3730,41 +3765,68 @@ class ProvidersOverlay(_HudOverlay):
                 entry[0].setCurrentIndex(1 if seen else 0)
 
     def _list(self, pid: str) -> None:
-        values = self._values(pid)          # before processEvents — see _test
-        self._say(pid, "reading…", C.TEXT_DIM)
-        QApplication.processEvents()
+        """Refresh a model/voice catalogue on a worker, not in the UI thread."""
+        import threading
+        from providers import diagnostics
+
+        values = self._values(pid)
+        self._say(pid, "reading in background…", C.TEXT_DIM)
+        generation = self._list_generation.get(pid, 0) + 1
+        self._list_generation[pid] = generation
+        fingerprint = self._provider_values_fingerprint(values)
+        registry = self._registry
+
+        def work():
+            result = diagnostics.list_provider_options(registry, pid, values)
+            result["fingerprint"] = fingerprint
+            self._list_ready.emit(pid, generation, result)
+
+        threading.Thread(target=work, daemon=True,
+                         name=f"provider-list-{pid}").start()
+
+    def _on_list_ready(self, pid: str, generation: int, result: dict) -> None:
+        """Update the service selector after the background catalogue call."""
+        if generation != self._list_generation.get(pid) or pid not in self._status:
+            return
         try:
-            inst = self._registry.build(pid, values)
-            if hasattr(inst, "model_options"):
-                items, key = inst.model_options(), "model"
-            elif hasattr(inst, "models"):
-                items, key = [(m, m) for m in inst.models()], "model"
-            elif hasattr(inst, "voices"):
-                items, key = list(inst.voices()), "voice_id"
-            else:
-                self._say(pid, "Nothing to list for this one.", C.TEXT_DIM)
-                return
-        except Exception as e:
-            self._say(pid, f"✕  {type(e).__name__}: {str(e)[:150]}", C.RED)
+            current = self._provider_values_fingerprint(self._values(pid))
+        except Exception:
+            return
+        if result.get("fingerprint") != current:
+            self._say(pid, "settings changed — refresh again.", C.TEXT_DIM)
             return
 
-        entry = self._edits.get(pid, {}).get(key)
-        if entry is None or not items:
-            self._say(pid, f"✓  {len(items)} found." if items else "None found.",
-                      C.GREEN if items else C.TEXT_DIM)
+        message = str(result.get("message") or "")
+        if result.get("error"):
+            self._say(pid, f"✕  {message}", C.RED)
             return
+        items = list(result.get("items") or [])
+        if not items:
+            self._say(pid, message or "None found.", C.TEXT_DIM)
+            return
+
+        field = str(result.get("field") or "")
+        entry = self._edits.get(pid, {}).get(field)
+        if entry is None:
+            self._say(pid, f"✓  {len(items)} found.", C.GREEN)
+            return
+
         box = entry[0]
-        if isinstance(box, QComboBox):
-            keep = box.currentData() or box.currentText()
-            box.clear()
-            for value, label in items:
-                box.addItem(str(label), str(value))
-            j = box.findData(keep)
-            box.setCurrentIndex(j if j >= 0 else 0)
-        else:
+        if not isinstance(box, QComboBox):
             self._say(pid, f"✓  {len(items)} available: "
                            f"{', '.join(str(v) for v, _ in items[:8])}", C.GREEN)
             return
+
+        keep = box.currentData() or box.currentText()
+        previous = box.blockSignals(True)
+        try:
+            box.clear()
+            for value, label in items:
+                box.addItem(str(label), str(value))
+            selected = box.findData(keep)
+            box.setCurrentIndex(selected if selected >= 0 else 0)
+        finally:
+            box.blockSignals(previous)
         self._say(pid, f"✓  {len(items)} available — pick one above.", C.GREEN)
 
     def _install(self, pid: str) -> None:
