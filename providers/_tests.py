@@ -220,6 +220,77 @@ async def test_real_caller_shapes():
           str(eng._mic_bytes))
 
 
+async def test_auto_vad_drives_the_full_voice_pipeline():
+    """Mic PCM -> VAD silence boundary -> STT -> LLM -> TTS -> speaker events."""
+    import numpy as np
+
+    from providers.engine_pipeline import PipelineEngine
+
+    section("[1b] Automatic turn detection carries speech through the full pipeline")
+    stt, tts = FakeSTT(), FakeTTS()
+    llm = FakeLLM([[{"text": "Hello, MINDER."}]])
+    engine = PipelineEngine(llm, stt=stt, tts=tts, config=Cfg(),
+                            log=lambda _message: None)
+    engine.auto_turn = True
+
+    received = []
+    finished = asyncio.Event()
+
+    async def collect():
+        async for message in engine.receive():
+            received.append(message)
+            if (message.server_content
+                    and message.server_content.turn_complete):
+                finished.set()
+                return
+
+    task = asyncio.create_task(collect())
+    # 400 ms above the adaptive noise floor is a speech turn. 700 ms of silence
+    # is the configured end-of-turn boundary. No external mic or device needed.
+    speech = np.full(160, 4000, dtype=np.int16).tobytes()  # 10 ms at 16 kHz
+    silence = bytes(160 * 2)
+    try:
+        for _ in range(40):
+            await engine.send_realtime_input(audio=speech)
+        for _ in range(70):
+            await engine.send_realtime_input(audio=silence)
+
+        await asyncio.wait_for(finished.wait(), 10)
+
+        heard = [
+            m.server_content.input_transcription.text
+            for m in received
+            if m.server_content and m.server_content.input_transcription
+        ]
+        said = [
+            m.server_content.output_transcription.text
+            for m in received
+            if m.server_content and m.server_content.output_transcription
+        ]
+        audio_bytes = sum(
+            len(m.data) for m in received if m.data
+        )
+
+        check("speech frames are transcribed after the silence boundary",
+              heard == ["open the browser"], str(heard))
+        check("the selected LLM receives exactly one user turn",
+              len(llm.seen) == 1 and
+              llm.seen[0][-1]["content"] == "open the browser",
+              str(llm.seen))
+        check("assistant transcript reaches the event stream",
+              "".join(said) == "Hello, MINDER.", repr(said))
+        check("the configured TTS speaks the answer",
+              tts.said == ["Hello, MINDER."], str(tts.said))
+        check("speaker PCM is emitted",
+              audio_bytes > 0, f"{audio_bytes} bytes")
+    except Exception as exc:
+        check("automatic voice turn completes",
+              False, f"{type(exc).__name__}: {exc}")
+    finally:
+        task.cancel()
+        await engine.close()
+
+
 async def test_taskgroup_and_tool_loop():
     """main.py answers a tool call from INSIDE its loop over receive(). An
     engine that waits there deadlocks the turn; one that raises there cancels
@@ -1381,6 +1452,7 @@ async def test_xkiro_tts_voice_and_audio_contract():
 async def main() -> int:
     print("providers self-test")
     await test_real_caller_shapes()
+    await test_auto_vad_drives_the_full_voice_pipeline()
     await test_taskgroup_and_tool_loop()
     await test_full_stack_over_http()
     test_vision_is_asked_not_guessed()
