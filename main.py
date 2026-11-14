@@ -1019,9 +1019,12 @@ class JarvisLive:
         """Turn hold-to-talk on or off. Returns the scope actually achieved."""
         from core.hotkey import PushToTalk
 
-        self._ptt_enabled = bool(enabled)
         with self._ptt_queue_lock:
+            was_held = self._ptt_held
+            self._ptt_enabled = bool(enabled)
             self._ptt_held = False
+            if not enabled and was_held:
+                self._schedule_ptt_flush_locked()
         if not enabled:
             if self._ptt is not None:
                 self._ptt.stop()
@@ -1042,6 +1045,16 @@ class JarvisLive:
         except Exception:
             pass
         return scope
+
+    def _schedule_ptt_flush_locked(self) -> None:
+        """Schedule a pipeline turn boundary while holding _ptt_queue_lock."""
+        if self._engine is None or self._loop is None or self.out_queue is None:
+            return
+        try:
+            from core.ptt_queue import schedule_flush_barrier
+            schedule_flush_barrier(self._loop, self.out_queue, self._engine)
+        except Exception as e:
+            print(f"[MINDER] PTT flush scheduling failed: {e}")
 
     def _on_mic_queue_overflow(self) -> None:
         """Report sustained audio backpressure without flooding the activity log."""
@@ -1077,16 +1090,12 @@ class JarvisLive:
     def _on_ptt(self, held: bool) -> None:
         """Chord pressed or released — may arrive on the hotkey thread."""
         with self._ptt_queue_lock:
+            was_held = self._ptt_held
             self._ptt_held = held
-            if not held and self._engine is not None:
-                try:
-                    # Schedule the barrier before another PTT press can
-                    # reacquire the lock and enqueue the next utterance.
-                    from core.ptt_queue import schedule_flush_barrier
-                    schedule_flush_barrier(
-                        self._loop, self.out_queue, self._engine)
-                except Exception as e:
-                    print(f"[MINDER] PTT flush scheduling failed: {e}")
+            if not held and was_held:
+                # Schedule the barrier before another PTT press can reacquire
+                # the lock and enqueue the next utterance.
+                self._schedule_ptt_flush_locked()
 
         if held:
             # Holding the key is also a way to wake it, so push-to-talk works
