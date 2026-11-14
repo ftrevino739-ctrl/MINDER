@@ -614,6 +614,7 @@ class JarvisLive:
         # This guarantees the final held frame reaches the engine before STT
         # flushes the buffered utterance.
         self._ptt_queue_lock       = threading.Lock()
+        self._audio_queue_dropped  = 0
         self._ptt                  = None    # core.hotkey.PushToTalk
         self._out_level            = 0.0     # level of the audio being played right now
         self._echo                 = EchoGuard()
@@ -1042,6 +1043,19 @@ class JarvisLive:
             pass
         return scope
 
+    def _on_mic_queue_overflow(self) -> None:
+        """Report sustained audio backpressure without flooding the activity log."""
+        self._audio_queue_dropped += 1
+        dropped = self._audio_queue_dropped
+        if dropped == 1 or dropped % 20 == 0:
+            try:
+                self.ui.write_log(
+                    f"SYS: Audio sender is backed up; {dropped} microphone "
+                    f"chunk{'s' if dropped != 1 else ''} could not be queued."
+                )
+            except Exception:
+                pass
+
     def _queue_mic_audio(self, data: bytes, mime_type: str = "audio/pcm") -> bool:
         """Queue a microphone frame in order with PTT release barriers.
 
@@ -1057,6 +1071,7 @@ class JarvisLive:
             ptt_state=lambda: (self._ptt_enabled, self._ptt_held),
             data=data,
             mime_type=mime_type,
+            on_overflow=self._on_mic_queue_overflow,
         )
 
     def _on_ptt(self, held: bool) -> None:
