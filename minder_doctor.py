@@ -36,7 +36,7 @@ def _module_available(module_name: str) -> bool:
 
 
 def _line(status: str, label: str, detail: str = "") -> None:
-    suffix = f" — {detail}" if detail else ""
+    suffix = f" - {detail}" if detail else ""
     print(f"[{status}] {label}{suffix}")
 
 
@@ -100,7 +100,7 @@ def _audio_report() -> None:
 
 
 def main() -> int:
-    print("MINDER DOCTOR — read-only diagnostics")
+    print("MINDER DOCTOR - read-only diagnostics")
     print("=" * 48)
     print(f"Operating system: {platform.platform()}")
     print(f"Python: {sys.version.split()[0]} ({sys.executable})")
@@ -108,7 +108,7 @@ def main() -> int:
 
     version = sys.version_info[:2]
     if (3, 11) <= version <= (3, 13):
-        _line("OK", "Python version", "within the tested 3.11–3.13 range")
+        _line("OK", "Python version", "within the tested 3.11-3.13 range")
     elif version < (3, 11):
         _line("FAIL", "Python version", "MINDER requires Python 3.11 or newer")
     else:
