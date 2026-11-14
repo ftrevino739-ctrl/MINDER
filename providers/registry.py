@@ -43,7 +43,9 @@ _MODULES: dict[str, tuple[str, ...]] = {
 _declarations: dict[str, dict] = {}     # id -> PROVIDER, for modules imported so far
 _instances: dict[str, Any] = {}         # id -> built provider, keyed by config
 _failed: dict[str, str] = {}            # module name -> why it would not import
-_instances_lock = threading.RLock()  # prevent two workers loading the same heavy model
+_instances_lock = threading.RLock()  # protects cache and in-flight build records
+_building: dict[str, threading.Event] = {}
+_registry_generation = 0
 
 
 def _load(module_name: str) -> Optional[dict]:
@@ -133,34 +135,75 @@ def _fingerprint(provider_id: str, cfg: dict) -> str:
 
 
 def build(provider_id: str, cfg: dict):
-    """Build one provider instance per config, serialising concurrent first use.
+    """Build one provider instance per config without duplicate model loads.
 
-    Whisper and Piper can load hundreds of megabytes of model weights. The
-    settings panel may TEST a provider at the same time the conversation starts;
-    without this lock both paths can miss the cache and load two copies.
+    A Whisper/Piper factory may download or load hundreds of megabytes. Only
+    cache bookkeeping happens under the global lock; the expensive factory runs
+    outside it so APPLY/reset never waits for a model to finish loading.
     """
     key = _fingerprint(provider_id, cfg)
-    with _instances_lock:
-        if key in _instances:
-            return _instances[key]
 
-        decl = get_declaration(provider_id)
-        if decl is None:
-            raise LookupError(f"no provider called {provider_id!r}")
-        if not decl.get("_available", True):
-            missing = ", ".join(decl.get("requires", ()))
-            raise RuntimeError(f"{decl['label']} needs {missing}, which is not installed")
+    while True:
+        with _instances_lock:
+            cached = _instances.get(key)
+            if cached is not None:
+                return cached
+            pending = _building.get(key)
+            if pending is None:
+                pending = threading.Event()
+                _building[key] = pending
+                generation = _registry_generation
+                owner = True
+            else:
+                owner = False
 
-        inst = decl["factory"](cfg)
-        if not hasattr(inst, "caps"):
-            inst.caps = caps_of(decl)
-        _instances[key] = inst
-        return inst
+        if not owner:
+            # Another worker is constructing this exact provider configuration.
+            # Wait without holding the registry lock; a reset remains immediate.
+            pending.wait()
+            continue
+
+        try:
+            decl = get_declaration(provider_id)
+            if decl is None:
+                raise LookupError(f"no provider called {provider_id!r}")
+            if not decl.get("_available", True):
+                missing = ", ".join(decl.get("requires", ()))
+                raise RuntimeError(
+                    f"{decl['label']} needs {missing}, which is not installed")
+
+            instance = decl["factory"](cfg)
+            if not hasattr(instance, "caps"):
+                instance.caps = caps_of(decl)
+        except BaseException:
+            with _instances_lock:
+                if _building.get(key) is pending:
+                    _building.pop(key, None)
+                pending.set()
+            raise
+
+        with _instances_lock:
+            # If settings were applied while this provider was loading, return
+            # the instance to its original caller but do not repopulate the
+            # cache that reset just cleared.
+            if generation == _registry_generation:
+                _instances[key] = instance
+            if _building.get(key) is pending:
+                _building.pop(key, None)
+            pending.set()
+        return instance
 
 
 def reset() -> None:
-    """Drop every built provider after an explicit settings change."""
+    """Invalidate cached providers immediately after an explicit settings change.
+
+    A model loading in another thread is not joined or cancelled. Its result
+    will be returned to that existing caller but will not be reinserted into
+    the cache after this generation changes.
+    """
+    global _registry_generation
     with _instances_lock:
+        _registry_generation += 1
         _instances.clear()
 
 
