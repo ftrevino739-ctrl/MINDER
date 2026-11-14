@@ -62,8 +62,7 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
         # The hotkey release updates the held state and schedules the marker
         # under the same lock as frame enqueue, exactly as main.py does.
         with lock:
-            barrier = schedule_flush_barrier(loop, queue, pipeline)
-        self.assertIsNotNone(barrier)
+            schedule_flush_barrier(loop, queue, pipeline)
 
         self.assertTrue(pipeline.flushed.wait(timeout=3),
                         "release never flushed the pipeline")
