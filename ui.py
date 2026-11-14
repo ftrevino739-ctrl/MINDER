@@ -3996,14 +3996,7 @@ class ClipboardPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            ClipboardPanel {{
-                background: rgba(0, 8, 14, 248);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=14)
         self.setFixedWidth(self._W)
         self._clip_text = ""
 
@@ -4090,14 +4083,7 @@ class PluginSettingsOverlay(QWidget):
 
     def __init__(self, sections: list[dict], parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            PluginSettingsOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=18)
         self._sections = sections or []
         self._widgets: dict[tuple, object] = {}    # (namespace, key) -> input widget
         self._types:   dict[tuple, str]    = {}     # (namespace, key) -> field type
@@ -4341,14 +4327,7 @@ class RemoteKeyOverlay(QWidget):
                  manual_url: str = "", expiry_secs: int = 600, parent=None,
                  bind_error: str = ""):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            RemoteKeyOverlay {{
-                background: rgba(0, 4, 12, 0.95);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 14px;
-            }}
-        """)
+        _apply_glass_surface(self, radius=18)
         self._expiry          = time.time() + expiry_secs
         self._on_new_key      = None
         self._auto_login_url  = auto_login_url
