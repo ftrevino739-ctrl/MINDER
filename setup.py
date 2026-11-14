@@ -17,6 +17,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Setup prints Unicode status markers. Preserve the active console encoding,
+# but escape characters it cannot represent instead of failing on cp1252.
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        try:
+            _reconfigure(errors="backslashreplace")
+        except (OSError, ValueError):
+            pass
+
 OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 HERE = Path(__file__).resolve().parent
 
