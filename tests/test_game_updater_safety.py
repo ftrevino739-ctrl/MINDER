@@ -28,6 +28,70 @@ class GameUpdaterSafetyTests(unittest.TestCase):
             f"Direct scheduled-script startup failed:\n{result.stdout}\n{result.stderr}",
         )
 
+    def test_linux_scheduler_only_replaces_its_own_cron_markers(self):
+        script_path = str(Path(game_module.__file__).resolve())
+        unrelated = f"12 3 * * * {os.sys.executable} {script_path} --manual # user-managed"
+        existing = "\n".join([
+            "# keep this unrelated crontab comment",
+            unrelated,
+            "0 3 * * * /usr/bin/python /old/game_updater.py --scheduled # MINDER_GameUpdater",
+            "0 4 * * * /usr/bin/python /old/game_updater.py --scheduled # JARVIS_GameUpdater",
+        ])
+        responses = [
+            type("Result", (), {"returncode": 0, "stdout": existing, "stderr": ""})(),
+            type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+        ]
+        with (
+            patch.object(game_module, "is_windows", return_value=False),
+            patch.object(game_module, "is_mac", return_value=False),
+            patch.object(game_module.subprocess, "run", side_effect=responses) as run,
+        ):
+            result = game_module._schedule_linux(4, 15)
+
+        self.assertIn("scheduled at 04:15", result)
+        written_crontab = run.call_args_list[1].kwargs["input"]
+        self.assertIn("# keep this unrelated crontab comment", written_crontab)
+        self.assertIn(unrelated, written_crontab)
+        self.assertNotIn("# MINDER_GameUpdater", written_crontab)
+        self.assertEqual(written_crontab.count("# JARVIS_GameUpdater"), 1)
+
+    def test_linux_cancel_removes_only_managed_cron_markers(self):
+        script_path = str(Path(game_module.__file__).resolve())
+        unrelated = f"12 3 * * * {os.sys.executable} {script_path} --manual # user-managed"
+        existing = "\n".join([
+            unrelated,
+            "0 3 * * * /usr/bin/python /old/game_updater.py --scheduled # MINDER_GameUpdater",
+            "0 4 * * * /usr/bin/python /old/game_updater.py --scheduled # JARVIS_GameUpdater",
+        ])
+        responses = [
+            type("Result", (), {"returncode": 0, "stdout": existing, "stderr": ""})(),
+            type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+        ]
+        with (
+            patch.object(game_module, "is_windows", return_value=False),
+            patch.object(game_module, "is_mac", return_value=False),
+            patch.object(game_module.subprocess, "run", side_effect=responses) as run,
+        ):
+            result = game_module._cancel_scheduled_update()
+
+        self.assertEqual(result, "Scheduled update cancelled.")
+        written_crontab = run.call_args_list[1].kwargs["input"]
+        self.assertIn(unrelated, written_crontab)
+        self.assertNotIn("MINDER_GameUpdater", written_crontab)
+        self.assertNotIn("JARVIS_GameUpdater", written_crontab)
+
+    def test_linux_schedule_status_recognizes_intermediate_minder_marker(self):
+        existing = "0 3 * * * /usr/bin/python /old/game_updater.py --scheduled # MINDER_GameUpdater"
+        fake_result = type("Result", (), {"returncode": 0, "stdout": existing, "stderr": ""})()
+        with (
+            patch.object(game_module, "is_windows", return_value=False),
+            patch.object(game_module, "is_mac", return_value=False),
+            patch.object(game_module.subprocess, "run", return_value=fake_result),
+        ):
+            result = game_module._get_schedule_status()
+        self.assertIn("Game update is scheduled: 0 3 * * *", result)
+
+
     def test_windows_schedule_never_runs_elevated_or_as_system(self):
         fake_result = type("Result", (), {"returncode": 0, "stderr": ""})()
         with (
