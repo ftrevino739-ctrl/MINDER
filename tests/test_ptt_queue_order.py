@@ -5,9 +5,11 @@ import threading
 import unittest
 from types import SimpleNamespace
 
-from google.genai import types
-
-from main import JarvisLive
+from core.ptt_queue import (
+    enqueue_microphone_frame,
+    relay_outbound_audio,
+    schedule_flush_barrier,
+)
 
 
 class _RecordingPipeline:
@@ -15,12 +17,14 @@ class _RecordingPipeline:
         self.received = []
         self.flushed = threading.Event()
         self.flush_count = None
+        self.sample_rate = None
 
     async def send_realtime_input(self, *, audio):
         self.received.append((audio.data, audio.mime_type))
 
     async def flush_microphone(self, sample_rate):
         self.flush_count = len(self.received)
+        self.sample_rate = sample_rate
         self.flushed.set()
 
 
@@ -29,31 +33,37 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
         loop = asyncio.new_event_loop()
         thread = threading.Thread(target=loop.run_forever, daemon=True)
         thread.start()
-        self.addCleanup(lambda: self._stop_loop(loop, thread))
+        self.addCleanup(self._stop_loop, loop, thread)
 
+        queue = asyncio.Queue(maxsize=8)
         pipeline = _RecordingPipeline()
-        app = object.__new__(JarvisLive)
-        app._loop = loop
-        app.out_queue = asyncio.Queue(maxsize=4)
-        app.session = pipeline
-        app._engine = pipeline
-        app._ptt_enabled = True
-        app._ptt_held = True
-        app._ptt_queue_lock = threading.Lock()
-        app._wake_enabled = False
-        app._awake = True
-        app.ui = SimpleNamespace(set_state=lambda _state: None)
-
         sender = asyncio.run_coroutine_threadsafe(
-            JarvisLive._send_realtime(app), loop)
-        self.addCleanup(lambda: self._cancel_sender(sender))
+            relay_outbound_audio(
+                queue,
+                pipeline,
+                lambda data, mime_type: SimpleNamespace(
+                    data=data, mime_type=mime_type),
+                16000,
+            ),
+            loop,
+        )
+        self.addCleanup(self._cancel_sender, sender)
 
-        frames = [bytes([value]) * 320 for value in (1, 2, 3)]
+        lock = threading.Lock()
+        frames = [bytes([value]) * 320 for value in (1, 2, 3, 4)]
         for frame in frames:
-            self.assertTrue(app._queue_mic_audio(frame))
+            accepted = enqueue_microphone_frame(
+                loop, queue, lock,
+                ptt_enabled=True, ptt_held=True,
+                data=frame,
+            )
+            self.assertTrue(accepted)
 
-        # Simulates the PTT keyboard callback releasing on its own thread.
-        JarvisLive._on_ptt(app, False)
+        # The hotkey release updates the held state and schedules the marker
+        # under the same lock as frame enqueue, exactly as main.py does.
+        with lock:
+            barrier = schedule_flush_barrier(loop, queue, pipeline)
+        self.assertIsNotNone(barrier)
 
         self.assertTrue(pipeline.flushed.wait(timeout=3),
                         "release never flushed the pipeline")
@@ -65,7 +75,13 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
             len(frames),
             "the STT flush overtook a microphone frame",
         )
-        self.assertFalse(app._queue_mic_audio(b"late frame"))
+        self.assertEqual(pipeline.sample_rate, 16000)
+
+        self.assertFalse(enqueue_microphone_frame(
+            loop, queue, lock,
+            ptt_enabled=True, ptt_held=False,
+            data=b"late frame",
+        ))
 
     @staticmethod
     def _cancel_sender(sender):
@@ -74,7 +90,7 @@ class PushToTalkQueueOrderTests(unittest.TestCase):
         sender.cancel()
         try:
             sender.result(timeout=2)
-        except (asyncio.CancelledError, Exception):
+        except Exception:
             pass
 
     @staticmethod
