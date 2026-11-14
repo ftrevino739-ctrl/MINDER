@@ -1,4 +1,5 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from providers.catalog_requests import CatalogRequestGate
 
@@ -14,6 +15,16 @@ class CatalogRequestGateTests(unittest.TestCase):
         self.assertEqual(first, 1)
         self.assertIsNone(second)
         self.assertTrue(self.gate.is_current("xkiro", first, "key-a/model-a"))
+
+    def test_concurrent_duplicate_requests_start_only_one_worker(self):
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            generations = list(pool.map(
+                lambda _n: self.gate.begin("groq", "endpoint/model"),
+                range(24),
+            ))
+
+        self.assertEqual(sum(value is not None for value in generations), 1)
+        self.assertEqual(sum(value is None for value in generations), 23)
 
     def test_new_configuration_supersedes_old_worker(self):
         old = self.gate.begin("xkiro", "key-a/model-a")
