@@ -2,7 +2,8 @@
 
 This test constructs the real HUD and main window, pumps Qt events, and checks a
 thread-safe state update. It does not connect providers, open audio devices,
-record from a microphone, access a camera, or contact the network.
+record from a microphone, access a camera, read personal memory or contact the
+network. Audio and memory panels use empty fixtures.
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ def main() -> int:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
     from ui import (
-        ClipboardPanel, ConfirmBanner, JarvisUI,
-        PluginManagerOverlay, PluginSettingsOverlay,
+        AudioDeviceOverlay, ClipboardPanel, ConfirmBanner, JarvisUI,
+        MemoryOverlay, PluginManagerOverlay, PluginSettingsOverlay,
     )
 
     ui = None
@@ -57,6 +58,26 @@ def main() -> int:
             ConfirmBanner("Smoke test", "No action is attached.",
                           parent=window.centralWidget()),
         ]
+
+        # These two panels normally inspect the user's saved memory and the
+        # host's audio endpoints. Supply empty, read-only fixtures so CI checks
+        # widget construction without reading personal data or opening devices.
+        from unittest.mock import patch
+        import core.audio_devices as audio_devices
+        import memory.config_manager as config_manager
+        import memory.memory_manager as memory_manager
+
+        with (
+            patch.object(audio_devices, "list_devices", return_value=[]),
+            patch.object(audio_devices, "get_output_volume", return_value=None),
+            patch.object(config_manager, "get_input_device", return_value=""),
+            patch.object(config_manager, "get_output_device", return_value=""),
+            patch.object(memory_manager, "all_entries_for_ui", return_value=[]),
+        ):
+            glass_panels.extend([
+                AudioDeviceOverlay(parent=window.centralWidget()),
+                MemoryOverlay(parent=window.centralWidget()),
+            ])
         for panel in glass_panels:
             if panel.objectName() != "minderGlassSurface":
                 raise RuntimeError(
@@ -75,7 +96,7 @@ def main() -> int:
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
         print("[OK] Queued state update: delivered")
-        print("[OK] Plugin, clipboard and confirmation glass overlays: constructed")
+        print("[OK] Six glass overlays: constructed with safe fixtures")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
         return 0
     finally:
