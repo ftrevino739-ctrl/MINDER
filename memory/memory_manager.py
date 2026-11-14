@@ -114,7 +114,11 @@ def _trim_to_limit(memory: dict) -> dict:
                 f"({', '.join(dropped[:3])}{'…' if len(dropped) > 3 else ''})"
             )
         except Exception:
-        def _write_memory_file(memory: dict) -> None:
+            pass
+    return memory
+
+
+def _write_memory_file(memory: dict) -> None:
     """Write a complete snapshot then atomically replace long_term.json.
 
     A crash or full disk during a direct write_text() could leave truncated
@@ -158,9 +162,6 @@ def save_memory(memory: dict) -> None:
     with _lock:
         memory = _trim_to_limit(memory)
         _write_memory_file(memory)
-ncoding="utf-8",
-        )
-
 
 def _truncate_value(val: str) -> str:
     if isinstance(val, str) and len(val) > MAX_VALUE_LENGTH:
