@@ -95,7 +95,9 @@ class PushToTalkTests(unittest.TestCase):
                 # Let the old poll finish after the new session has gone active.
                 release_first_call.set()
                 old_worker.join(timeout=1.0)
+                stopper.join(timeout=1.5)
                 self.assertFalse(old_worker.is_alive())
+                self.assertFalse(stopper.is_alive())
                 self.assertEqual(callback_events, [True])
                 self.assertTrue(ptt.held)
                 self.assertEqual(ptt.scope, "global")
