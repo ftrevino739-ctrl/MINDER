@@ -768,21 +768,26 @@ class JarvisLive:
     # ── Wake word: UI callbacks (called from the Qt thread) ──────────────────
 
     def _ui_wake_toggle(self, enable: bool) -> str:
-        """Enable/disable wake word from the settings UI. Returns a status token:
-        'enabled' | 'disabled' | 'need_download'."""
+        """Enable/disable wake word from the settings UI. Returns a status token."""
         if enable:
             if not wake_is_ready():
                 return "need_download"
+            if not self._ensure_wake_detector():
+                self._wake_enabled = False
+                save_wake_word_enabled(False)
+                self.ui.write_log("SYS: Wake word could not start; it remains disabled.")
+                return "unavailable"
             self._wake_enabled = True
             save_wake_word_enabled(True)
-            self._ensure_wake_detector()
             self.sleep(reason="wake word enabled")
             return "enabled"
-        else:
-            self._wake_enabled = False
-            save_wake_word_enabled(False)
-            self.wake(reason="wake word disabled")
-            return "disabled"
+
+        self._wake_enabled = False
+        save_wake_word_enabled(False)
+        if self._wake_detector is not None:
+            self._wake_detector.stop()
+        self.wake(reason="wake word disabled")
+        return "disabled"
 
     def _ui_wake_manual(self) -> None:
         """Manual sleep/wake button in the UI."""
