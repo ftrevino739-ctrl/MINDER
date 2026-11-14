@@ -1050,37 +1050,29 @@ class JarvisLive:
         held are scheduled before the release marker, and later frames are
         rejected.
         """
-        loop, queue = self._loop, self.out_queue
-        if loop is None or queue is None:
-            return False
-        with self._ptt_queue_lock:
-            if self._ptt_enabled and not self._ptt_held:
-                return False
-            loop.call_soon_threadsafe(
-                queue.put_nowait,
-                {"data": bytes(data), "mime_type": mime_type},
-            )
-        return True
+        from core.ptt_queue import enqueue_microphone_frame
+
+        return enqueue_microphone_frame(
+            self._loop, self.out_queue, self._ptt_queue_lock,
+            ptt_enabled=self._ptt_enabled,
+            ptt_held=self._ptt_held,
+            data=data,
+            mime_type=mime_type,
+        )
 
     def _on_ptt(self, held: bool) -> None:
         """Chord pressed or released — may arrive on the hotkey thread."""
         with self._ptt_queue_lock:
             self._ptt_held = held
-            if not held:
-                engine_to_flush = self._engine
-                loop, queue = self._loop, self.out_queue
-                if engine_to_flush is not None and loop is not None and queue is not None:
-                    try:
-                        # Schedule the barrier before another PTT press can
-                        # reacquire the lock and enqueue the next utterance.
-                        async def _queue_flush_barrier():
-                            await queue.put({
-                                "_flush_pipeline_turn": engine_to_flush
-                            })
-                        asyncio.run_coroutine_threadsafe(
-                            _queue_flush_barrier(), loop)
-                    except Exception as e:
-                        print(f"[MINDER] PTT flush scheduling failed: {e}")
+            if not held and self._engine is not None:
+                try:
+                    # Schedule the barrier before another PTT press can
+                    # reacquire the lock and enqueue the next utterance.
+                    from core.ptt_queue import schedule_flush_barrier
+                    schedule_flush_barrier(
+                        self._loop, self.out_queue, self._engine)
+                except Exception as e:
+                    print(f"[MINDER] PTT flush scheduling failed: {e}")
 
         if held:
             # Holding the key is also a way to wake it, so push-to-talk works
@@ -1548,28 +1540,10 @@ class JarvisLive:
         )
 
     async def _send_realtime(self):
-        while True:
-            msg = await self.out_queue.get()
-            # PTT release enters the queue behind every microphone frame that
-            # was accepted while the chord was held. Flush only after the sender
-            # has delivered all of them to the pipeline engine.
-            if isinstance(msg, dict) and "_flush_pipeline_turn" in msg:
-                engine = msg.get("_flush_pipeline_turn")
-                if engine is not None:
-                    await engine.flush_microphone(SEND_SAMPLE_RATE)
-                continue
+        from core.ptt_queue import relay_outbound_audio
 
-            # Gemini 3.x Live rejects the old realtime_input.media_chunks field
-            # (what `media=...` maps to) and closes the socket with a 1007. Send
-            # mic / phone PCM through the new `audio` field instead. Queue items
-            # are {"data": <bytes>, "mime_type": <str>} from _listen_audio and
-            # the phone relay.
-            await self.session.send_realtime_input(
-                audio=types.Blob(
-                    data=msg["data"],
-                    mime_type=msg.get("mime_type", "audio/pcm"),
-                )
-            )
+        await relay_outbound_audio(
+            self.out_queue, self.session, types.Blob, SEND_SAMPLE_RATE)
 
     async def _listen_audio(self):
         print("[MINDER] 🎤 Mic started")
