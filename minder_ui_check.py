@@ -58,11 +58,6 @@ def main() -> int:
             CustomizeOverlay(parent=window.centralWidget()),
             ClipboardPanel(parent=window.centralWidget()),
             _CameraPreview(parent=window.centralWidget()),
-            RemoteKeyOverlay(
-                "http://127.0.0.1:8765", "smoke-token",
-                auto_login_url="http://127.0.0.1:8765/?smoke=1",
-                expiry_secs=600, parent=window.centralWidget(),
-            ),
             ConfirmBanner("Smoke test", "No action is attached.",
                           parent=window.centralWidget()),
         ]
@@ -72,6 +67,7 @@ def main() -> int:
         # widget construction without reading personal data or opening devices.
         from unittest.mock import patch
         import core.audio_devices as audio_devices
+        import dashboard.server as dashboard_server
         import memory.config_manager as config_manager
         import memory.memory_manager as memory_manager
 
@@ -86,6 +82,16 @@ def main() -> int:
                 AudioDeviceOverlay(parent=window.centralWidget()),
                 MemoryOverlay(parent=window.centralWidget()),
             ])
+
+        # The remote-access constructor normally checks Windows Firewall for
+        # blocking rules. Keep this visual smoke test fully read-only and local.
+        with patch.object(dashboard_server, "blocking_firewall_rules",
+                          return_value=[]):
+            glass_panels.append(RemoteKeyOverlay(
+                "http://127.0.0.1:8765", "smoke-token",
+                auto_login_url="http://127.0.0.1:8765/?smoke=1",
+                expiry_secs=600, parent=window.centralWidget(),
+            ))
         for panel in glass_panels:
             if panel.objectName() != "minderGlassSurface":
                 raise RuntimeError(
