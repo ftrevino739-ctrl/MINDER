@@ -5,6 +5,7 @@ requests and reject results that belong to an older provider configuration.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 
@@ -24,7 +25,8 @@ def catalogue_fingerprint(values: dict) -> str:
         for key, value in (values or {}).items()
         if str(key) not in _CATALOGUE_SELECTION_KEYS
     }
-    return json.dumps(relevant, sort_keys=True, ensure_ascii=False, default=str)
+    payload = json.dumps(relevant, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class CatalogRequestGate:
