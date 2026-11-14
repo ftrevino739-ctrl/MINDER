@@ -4,7 +4,7 @@
 
 This is an engineering review of safeguards and regression coverage, not a security certification or proof that the application is production-ready. GitHub Actions can verify Python syntax and mocked behavior; it cannot validate the target Windows desktop, real accounts, installed applications, audio devices, or native dialogs.
 
-The repository's current CI workflow checks Python 3.11, 3.12 and 3.13 and runs the provider regression suite. Do not treat a green run as a substitute for the Windows checklist below.
+The repository's current CI workflow checks Python 3.11, 3.12 and 3.13, runs the provider regression suite, and has a Windows Server 2025 job on Python 3.12 that installs the declared application dependencies, runs the read-only doctor and executes the unit/safety suite. The first complete Windows run passed all 195 tests (one POSIX-permission test is skipped because Windows uses ACLs rather than POSIX mode bits). This is automated Windows compatibility coverage, not acceptance on the user's Windows 11 PC. Do not treat a green run as a substitute for the checklist below.
 
 ## Safeguards covered by code and regression tests
 
