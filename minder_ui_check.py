@@ -21,8 +21,9 @@ def main() -> int:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
     from ui import (
-        AudioDeviceOverlay, ClipboardPanel, ConfirmBanner, JarvisUI,
-        MemoryOverlay, PluginManagerOverlay, PluginSettingsOverlay,
+        AudioDeviceOverlay, ClipboardPanel, ConfirmBanner, CustomizeOverlay,
+        JarvisUI, MemoryOverlay, PluginManagerOverlay, PluginSettingsOverlay,
+        _CameraPreview,
     )
 
     ui = None
@@ -54,7 +55,9 @@ def main() -> int:
         glass_panels = [
             PluginManagerOverlay([], parent=window.centralWidget()),
             PluginSettingsOverlay([], parent=window.centralWidget()),
+            CustomizeOverlay(parent=window.centralWidget()),
             ClipboardPanel(parent=window.centralWidget()),
+            _CameraPreview(parent=window.centralWidget()),
             ConfirmBanner("Smoke test", "No action is attached.",
                           parent=window.centralWidget()),
         ]
@@ -96,7 +99,7 @@ def main() -> int:
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
         print("[OK] Queued state update: delivered")
-        print("[OK] Six glass overlays: constructed with safe fixtures")
+        print("[OK] Eight glass overlays: constructed with safe fixtures")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
         return 0
     finally:
