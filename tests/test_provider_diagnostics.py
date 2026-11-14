@@ -110,6 +110,49 @@ class ProviderDiagnosticsTests(unittest.TestCase):
             ("llama3.2", "llama3.2"),
         ])
 
+    def test_registry_reset_does_not_wait_for_a_model_factory(self):
+        started = threading.Event()
+        release = threading.Event()
+        instance = object()
+
+        def slow_factory(_cfg):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test factory was not released")
+            return instance
+
+        decl = {
+            "id": "slow_reset_test_provider",
+            "label": "Slow reset test provider",
+            "factory": slow_factory,
+            "caps": {},
+            "_available": True,
+            "requires": (),
+        }
+        cfg = {"model": "slow"}
+        key = registry._fingerprint("slow_reset_test_provider", cfg)
+        with registry._instances_lock:
+            old = registry._instances.pop(key, None)
+        try:
+            with patch.object(registry, "get_declaration", return_value=decl):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    build = pool.submit(registry.build,
+                                        "slow_reset_test_provider", cfg)
+                    self.assertTrue(started.wait(timeout=2))
+                    began = time.monotonic()
+                    registry.reset()
+                    elapsed = time.monotonic() - began
+                    self.assertLess(elapsed, 0.5)
+                    release.set()
+                    self.assertIs(build.result(timeout=3), instance)
+            self.assertNotIn(key, registry._instances)
+        finally:
+            release.set()
+            with registry._instances_lock:
+                registry._instances.pop(key, None)
+                if old is not None:
+                    registry._instances[key] = old
+
     def test_concurrent_provider_build_loads_a_heavy_instance_only_once(self):
         calls = []
         instance = object()
