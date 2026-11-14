@@ -2781,7 +2781,7 @@ class ProvidersOverlay(_HudOverlay):
     _live_ready = pyqtSignal()
     # (provider id, [(value, label), ...]) from a worker that went and asked an
     # endpoint what it offers.
-    _models_ready = pyqtSignal(str, list)
+    _models_ready = pyqtSignal(str, int, str, object)
     # Provider tests and manual model/voice refreshes can perform network calls,
     # PowerShell synthesis or local model checks. Their results return as plain
     # data through these signals; workers never touch a QWidget.
@@ -2824,7 +2824,9 @@ class ProvidersOverlay(_HudOverlay):
         self._list_ready.connect(self._on_list_ready)
         self._provider_status.connect(self._on_provider_status)
         self._model_cache: dict[str, list] = {}
-        self._fetching: set = set()
+        self._model_cache_fingerprint: dict[str, str] = {}
+        from providers.catalog_requests import CatalogRequestGate
+        self._model_requests = CatalogRequestGate()
         self._probe_generation: dict[str, int] = {}
         self._list_generation: dict[str, int] = {}
         for _kind in ("tts", "stt", "llm"):
@@ -2989,50 +2991,47 @@ class ProvidersOverlay(_HudOverlay):
 
     # ── Asking an endpoint what it has, without being asked to ──────────────
     def _fetch_models(self, pid: str) -> None:
-        """Go and get the model list in the background.
+        """Discover model/voice options without freezing the Qt thread.
 
-        Pressing LIST worked, and making somebody press it was still wrong: at
-        the moment a local server is chosen, the one thing they need is the list
-        of models on it, and the app can simply go and read it. A button whose
-        only job is "now do the obvious next thing" is a button that should not
-        exist.
-
-        Off the interface thread, because it is a network call — a local server
-        answers in milliseconds and a cloud one does not, and a panel that
-        freezes while it finds out is worse than one that fills in a second
-        later. Failure is silent: not reaching the endpoint yet is the normal
-        state while somebody is still typing an address, and TEST is where a
-        real answer about reachability belongs."""
+        Requests are deduplicated per provider configuration. Changing a key,
+        endpoint or model creates a new generation; a slower response from the
+        previous configuration is ignored rather than replacing the new list.
+        """
         import threading
 
-        if not pid or pid in self._fetching:
+        if not pid:
             return
-        try:
-            values = self._values(pid) or dict(self._get_cfg(pid))
-        except Exception:
-            values = dict(self._get_cfg(pid))
+        values = self._provider_values_snapshot(pid)
         if not values.get("base_url") and not values.get("api_key"):
             return
-        self._fetching.add(pid)
+        fingerprint = self._provider_values_fingerprint(values)
+        generation = self._model_requests.begin(pid, fingerprint)
+        if generation is None:
+            return
+        if self._model_cache_fingerprint.get(pid) != fingerprint:
+            self._model_cache.pop(pid, None)
+            self._model_cache_fingerprint.pop(pid, None)
+
+        registry = self._registry
 
         def work():
             items = []
             try:
-                inst = self._registry.build(pid, values)
+                inst = registry.build(pid, values)
                 if hasattr(inst, "model_options"):
-                    items = inst.model_options(timeout=6.0)
+                    items = list(inst.model_options(timeout=6.0) or [])
                 elif hasattr(inst, "models"):
-                    items = [(m, m) for m in inst.models(timeout=6.0)]
+                    items = [(m, m) for m in (inst.models(timeout=6.0) or [])]
                 elif hasattr(inst, "voices"):
-                    items = list(inst.voices())
+                    items = list(inst.voices() or [])
             except Exception:
+                # An endpoint that is not ready yet is normal while its address
+                # or credentials are being entered. TEST reports reachability.
                 items = []
-            finally:
-                self._fetching.discard(pid)
-            if items:
-                self._models_ready.emit(pid, items)
+            self._models_ready.emit(pid, generation, fingerprint, items)
 
-        threading.Thread(target=work, daemon=True).start()
+        threading.Thread(target=work, daemon=True,
+                         name=f"provider-options-{pid}").start()
 
     def _prepare(self, pid: str) -> None:
         """Let a provider get itself ready as soon as it is configured.
@@ -3064,14 +3063,41 @@ class ProvidersOverlay(_HudOverlay):
         if pid in self._status:
             self._say(pid, message, colour)
 
-    def _on_models_ready(self, pid: str, items: list) -> None:
+    def _on_models_ready(self, pid: str, generation: int, fingerprint: str,
+                         items: list) -> None:
+        """Accept an automatic catalogue response only for its live settings."""
+        if not self._model_requests.is_current(pid, generation, fingerprint):
+            return
+        try:
+            current = self._provider_values_fingerprint(
+                self._provider_values_snapshot(pid))
+        except Exception:
+            self._model_requests.complete(pid, generation, fingerprint)
+            return
+        if fingerprint != current:
+            self._model_requests.complete(pid, generation, fingerprint)
+            # A form edit may have raced the worker. Retry using the values now
+            # visible, but only while this provider still has an active form.
+            if pid in self._edits:
+                QTimer.singleShot(0, lambda p=pid: self._fetch_models(p))
+            return
+
+        self._model_requests.complete(pid, generation, fingerprint)
+        if not items:
+            self._model_cache.pop(pid, None)
+            self._model_cache_fingerprint.pop(pid, None)
+            return
         self._model_cache[pid] = list(items)
+        self._model_cache_fingerprint[pid] = fingerprint
+        self._apply_model_items(pid, items)
+
+    def _apply_model_items(self, pid: str, items: list) -> None:
+        """Populate the active provider field on the Qt thread."""
         if self.isHidden():
             return
         fields = self._edits.get(pid, {})
-        # Model labels may intentionally differ from model ids (for example,
-        # xKiro adds FREE / PAID / PREMIUM badges). Identify the field by its
-        # semantic key, never by comparing its display label with its value.
+        # Labels may intentionally differ from model IDs (for example, xKiro
+        # adds FREE / PAID / PREMIUM badges); keep the stable value in item data.
         entry = fields.get("model") or fields.get("voice_id") or fields.get("voice")
         if entry is None or not isinstance(entry[0], QComboBox):
             return
@@ -3090,7 +3116,7 @@ class ProvidersOverlay(_HudOverlay):
         finally:
             box.blockSignals(previous)
         self._say(pid, f"{len(items)} model{'s' if len(items) != 1 else ''} "
-                       f"found on this server — pick one above.", C.TEXT_DIM)
+                       f"found on this server — pick one above.")
 
     def _set_mode(self, value: str) -> None:
         if value == self._mode:
@@ -3353,10 +3379,17 @@ class ProvidersOverlay(_HudOverlay):
 
         if sid:
             self._fields_into(lay, slot, sid)
-            # If a list was already fetched, use it; if not, go and get one.
-            if self._model_cache.get(sid):
-                QTimer.singleShot(0, lambda p=sid: self._on_models_ready(
-                    p, self._model_cache[p]))
+            # Reuse only a catalogue obtained with this exact provider config.
+            # A changed endpoint/key must trigger discovery rather than reusing
+            # values that belonged to the previous server.
+            current_fp = self._provider_values_fingerprint(
+                self._provider_values_snapshot(sid))
+            cached = self._model_cache.get(sid)
+            if (cached and
+                    self._model_cache_fingerprint.get(sid) == current_fp):
+                items = list(cached)
+                QTimer.singleShot(
+                    0, lambda p=sid, data=items: self._apply_model_items(p, data))
             else:
                 QTimer.singleShot(0, lambda p=sid: self._fetch_models(p))
         return w
@@ -3701,6 +3734,23 @@ class ProvidersOverlay(_HudOverlay):
             out[key] = value
         return out
 
+    def _provider_values_snapshot(self, pid: str) -> dict:
+        """Return stored provider settings overlaid with the current form edits.
+
+        Some catalogue presets carry fields that are deliberately hidden from
+        the form. Starting from saved config preserves those values while the
+        visible edits take precedence.
+        """
+        try:
+            values = dict(self._get_cfg(pid) or {})
+        except Exception:
+            values = {}
+        try:
+            values.update(self._values(pid) or {})
+        except Exception:
+            pass
+        return values
+
     def _remember_edits(self) -> None:
         """Keep what has been typed when the form is rebuilt.
 
@@ -3780,7 +3830,9 @@ class ProvidersOverlay(_HudOverlay):
         import threading
         from providers import diagnostics
 
-        values = self._values(pid)
+        values = self._provider_values_snapshot(pid)
+        # Manual refresh supersedes an automatic catalogue read for this ID.
+        self._model_requests.invalidate(pid)
         self._say(pid, "reading in background…", C.TEXT_DIM)
         generation = self._list_generation.get(pid, 0) + 1
         self._list_generation[pid] = generation
@@ -3800,7 +3852,8 @@ class ProvidersOverlay(_HudOverlay):
         if generation != self._list_generation.get(pid) or pid not in self._status:
             return
         try:
-            current = self._provider_values_fingerprint(self._values(pid))
+            current = self._provider_values_fingerprint(
+                self._provider_values_snapshot(pid))
         except Exception:
             return
         if result.get("fingerprint") != current:
@@ -3812,11 +3865,18 @@ class ProvidersOverlay(_HudOverlay):
             self._say(pid, f"✕  {message}", C.RED)
             return
         items = list(result.get("items") or [])
+        field = str(result.get("field") or "")
+        if field in ("model", "voice_id", "voice"):
+            if items:
+                self._model_cache[pid] = list(items)
+                self._model_cache_fingerprint[pid] = current
+            else:
+                self._model_cache.pop(pid, None)
+                self._model_cache_fingerprint.pop(pid, None)
         if not items:
             self._say(pid, message or "None found.", C.TEXT_DIM)
             return
 
-        field = str(result.get("field") or "")
         entry = self._edits.get(pid, {}).get(field)
         if entry is None:
             self._say(pid, f"✓  {len(items)} found.", C.GREEN)
@@ -3879,6 +3939,7 @@ class ProvidersOverlay(_HudOverlay):
             self._probe_generation[pid] += 1
         for pid in list(self._list_generation):
             self._list_generation[pid] += 1
+        self._model_requests.invalidate_all()
 
         # ONE write, not five. See save_providers for what the five cost.
         creds = {sid: self._values(sid) for sid in list(self._edits)}
