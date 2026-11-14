@@ -1064,11 +1064,23 @@ class JarvisLive:
 
     def _on_ptt(self, held: bool) -> None:
         """Chord pressed or released — may arrive on the hotkey thread."""
-        engine_to_flush = None
         with self._ptt_queue_lock:
             self._ptt_held = held
             if not held:
                 engine_to_flush = self._engine
+                loop, queue = self._loop, self.out_queue
+                if engine_to_flush is not None and loop is not None and queue is not None:
+                    try:
+                        # Schedule the barrier before another PTT press can
+                        # reacquire the lock and enqueue the next utterance.
+                        async def _queue_flush_barrier():
+                            await queue.put({
+                                "_flush_pipeline_turn": engine_to_flush
+                            })
+                        asyncio.run_coroutine_threadsafe(
+                            _queue_flush_barrier(), loop)
+                    except Exception as e:
+                        print(f"[MINDER] PTT flush scheduling failed: {e}")
 
         if held:
             # Holding the key is also a way to wake it, so push-to-talk works
@@ -1081,20 +1093,6 @@ class JarvisLive:
         # signal — which is also why it is the more reliable of the two ways to
         # talk to one. Scheduled onto the loop because this may arrive on the
         # hotkey thread.
-        if not held and engine_to_flush is not None and self._loop is not None:
-            try:
-                # Put the flush marker onto the SAME queue as mic frames. The
-                # sender consumes the queue in order, so no frame that was
-                # captured before key release can arrive after STT has flushed.
-                async def _queue_flush_barrier():
-                    if self.out_queue is not None:
-                        await self.out_queue.put({
-                            "_flush_pipeline_turn": engine_to_flush
-                        })
-                asyncio.run_coroutine_threadsafe(
-                    _queue_flush_barrier(), self._loop)
-            except Exception as e:
-                print(f"[MINDER] PTT flush scheduling failed: {e}")
         try:
             if held:
                 state = "LISTENING"
