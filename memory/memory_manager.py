@@ -1,9 +1,11 @@
 import json
 import re
 from datetime import datetime
-from threading import Lock
+from threading import RLock
 from pathlib import Path
+import os
 import sys
+import tempfile
 
 
 def get_base_dir() -> Path:
@@ -14,7 +16,7 @@ def get_base_dir() -> Path:
 
 BASE_DIR         = get_base_dir()
 MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
-_lock            = Lock()
+_lock            = RLock()
 MAX_VALUE_LENGTH = 380
 
 # ── Why there are two very different numbers here ────────────────────────────
@@ -112,18 +114,51 @@ def _trim_to_limit(memory: dict) -> dict:
                 f"({', '.join(dropped[:3])}{'…' if len(dropped) > 3 else ''})"
             )
         except Exception:
-            pass
-    return memory
+        def _write_memory_file(memory: dict) -> None:
+    """Write a complete snapshot then atomically replace long_term.json.
+
+    A crash or full disk during a direct write_text() could leave truncated
+    JSON; the next load would then quietly return an empty memory. The temporary
+    file lives beside the destination so os.replace stays on one filesystem.
+    """
+    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(memory, indent=2, ensure_ascii=False)
+    fd = None
+    temp_path = None
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            prefix=f".{MEMORY_PATH.name}.",
+            suffix=".tmp",
+            dir=str(MEMORY_PATH.parent),
+        )
+        stream = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+        fd = None  # the stream now owns the descriptor
+        with stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, MEMORY_PATH)
+        temp_path = None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if temp_path is not None:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
 
 def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
         return
-    memory = _trim_to_limit(memory)
-    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        memory = _trim_to_limit(memory)
+        _write_memory_file(memory)
+ncoding="utf-8",
         )
 
 
@@ -159,11 +194,14 @@ def _recursive_update(target: dict, updates: dict) -> bool:
 def update_memory(memory_update: dict) -> dict:
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
-    memory = load_memory()
-    if _recursive_update(memory, memory_update):
-        save_memory(memory)
-        print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
-    return memory
+    # Lock the complete read-modify-write transaction. Locking only the
+    # individual read and write lets concurrent workers overwrite new facts.
+    with _lock:
+        memory = load_memory()
+        if _recursive_update(memory, memory_update):
+            save_memory(memory)
+            print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
+        return memory
 
 def _entry_value(entry) -> str:
     """Accept both the {'value': ..., 'updated': ...} shape and a bare string,
@@ -410,14 +448,15 @@ def remember(key: str, value: str, category: str = "notes") -> str:
 
 
 def forget(key: str, category: str = "notes") -> str:
-    memory = load_memory()
-    cat    = memory.get(category, {})
-    if key in cat:
-        del cat[key]
-        memory[category] = cat
-        save_memory(memory)
-        return f"Forgotten: {category}/{key}"
-    return f"Not found: {category}/{key}"
+    with _lock:
+        memory = load_memory()
+        cat = memory.get(category, {})
+        if key in cat:
+            del cat[key]
+            memory[category] = cat
+            save_memory(memory)
+            return f"Forgotten: {category}/{key}"
+        return f"Not found: {category}/{key}"
 
 
 forget_memory = forget
@@ -429,30 +468,25 @@ _SESSION_MAX = 3   # safety cap — in practice 0-1 entries after pop
 
 
 def save_session_summary(summary: str, language: str = "") -> None:
-    """Append a 1-2 sentence session summary to long_term.json['sessions']."""
+    """Append a session summary without racing with other memory updates."""
     summary = (summary or "").strip()
     if not summary:
         return
-    memory   = load_memory()
-    sessions = memory.get("sessions", [])
-    if not isinstance(sessions, list):
-        sessions = []
-    entry: dict = {
-        "date":    datetime.now().strftime("%Y-%m-%d"),
-        "summary": summary[:280],
-    }
-    if language:
-        entry["language"] = language
-    sessions.append(entry)
-    memory["sessions"] = sessions[-_SESSION_MAX:]
     with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        memory = load_memory()
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list):
+            sessions = []
+        entry: dict = {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "summary": summary[:280],
+        }
+        if language:
+            entry["language"] = language
+        sessions.append(entry)
+        memory["sessions"] = sessions[-_SESSION_MAX:]
+        _write_memory_file(memory)
     print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
-
 
 def pop_last_session() -> dict | None:
     """
@@ -469,10 +503,7 @@ def pop_last_session() -> dict | None:
                 return None
             entry = sessions.pop()          # remove the last entry
             memory["sessions"] = sessions
-            MEMORY_PATH.write_text(
-                json.dumps(memory, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _write_memory_file(memory)
             return entry
         except Exception as e:
             print(f"[Memory] ⚠️ pop_last_session error: {e}")
