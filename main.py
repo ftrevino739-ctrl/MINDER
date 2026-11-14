@@ -1575,7 +1575,6 @@ class JarvisLive:
 
     async def _listen_audio(self):
         print("[MINDER] 🎤 Mic started")
-        loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
             # ── Wake-word gate ───────────────────────────────────────────────
