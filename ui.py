@@ -125,6 +125,7 @@ def _apply_glass_surface(
     *,
     background: str = "rgba(23, 32, 46, 232)",
     border: str = "rgba(220, 236, 252, 72)",
+    depth: bool = True,
 ) -> None:
     """Give a floating panel a restrained frosted-glass surface and depth.
 
@@ -143,11 +144,12 @@ def _apply_glass_surface(
             border-radius: {radius}px;
         }}
     """)
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(34)
-    shadow.setOffset(0, 10)
-    shadow.setColor(QColor(0, 0, 0, 145))
-    widget.setGraphicsEffect(shadow)
+    if depth:
+        shadow = QGraphicsDropShadowEffect(widget)
+        shadow.setBlurRadius(34)
+        shadow.setOffset(0, 10)
+        shadow.setColor(QColor(0, 0, 0, 145))
+        widget.setGraphicsEffect(shadow)
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -4647,7 +4649,8 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._build_header())
+        self._header_panel = self._build_header()
+        root.addWidget(self._header_panel)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -4841,7 +4844,8 @@ class MainWindow(QMainWindow):
         body.addWidget(self._right_panel, stretch=0)
 
         root.addLayout(body, stretch=1)
-        root.addWidget(self._build_footer())
+        self._footer_panel = self._build_footer()
+        root.addWidget(self._footer_panel)
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
         self._quick_drawer = self._build_quick_drawer()
@@ -5573,7 +5577,12 @@ class MainWindow(QMainWindow):
     def _build_header(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(54)
-        w.setStyleSheet(f"background: {C.DARK}; border-bottom: 1px solid {C.BORDER_B};")
+        _apply_glass_surface(
+            w, radius=0,
+            background="rgba(17, 27, 42, 238)",
+            border="rgba(220, 236, 252, 48)",
+            depth=False,
+        )
         lay = QHBoxLayout(w)
         lay.setContentsMargins(16, 0, 16, 0)
 
@@ -5660,7 +5669,12 @@ class MainWindow(QMainWindow):
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_LEFT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-right: 1px solid {C.BORDER};")
+        _apply_glass_surface(
+            w, radius=0,
+            background="rgba(16, 25, 39, 224)",
+            border="rgba(220, 236, 252, 42)",
+            depth=False,
+        )
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 10, 8, 10)
         lay.setSpacing(6)
@@ -5731,7 +5745,12 @@ class MainWindow(QMainWindow):
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_RIGHT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-left: 1px solid {C.BORDER};")
+        _apply_glass_surface(
+            w, radius=0,
+            background="rgba(16, 25, 39, 224)",
+            border="rgba(220, 236, 252, 42)",
+            depth=False,
+        )
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
@@ -6620,7 +6639,12 @@ class MainWindow(QMainWindow):
     def _build_footer(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(22)
-        w.setStyleSheet(f"background: {C.DARK}; border-top: 1px solid {C.BORDER};")
+        _apply_glass_surface(
+            w, radius=0,
+            background="rgba(17, 27, 42, 238)",
+            border="rgba(220, 236, 252, 48)",
+            depth=False,
+        )
         lay = QHBoxLayout(w); lay.setContentsMargins(14, 0, 14, 0)
 
         def _fl(txt, color=C.TEXT_MED):
