@@ -54,6 +54,26 @@ def main() -> int:
         if "border-radius: 14px" not in transcript.styleSheet():
             raise RuntimeError("Transcript does not have its rounded glass treatment")
 
+        # The four fixed regions form the frame around the centre HUD. They use
+        # translucent fills and fine dividers, but intentionally no drop-shadow
+        # effects: shadows on layout-owned, full-height panels are clipped and
+        # add needless work to every resize.
+        frame_surfaces = {
+            "header": getattr(window, "_header_panel", None),
+            "left sidebar": getattr(window, "_left_panel", None),
+            "right sidebar": getattr(window, "_right_panel", None),
+            "footer": getattr(window, "_footer_panel", None),
+        }
+        for label, surface in frame_surfaces.items():
+            if surface is None:
+                raise RuntimeError(f"MINDER {label} surface was not retained")
+            if surface.objectName() != "minderGlassSurface":
+                raise RuntimeError(f"MINDER {label} is missing its glass identity")
+            if not surface.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground):
+                raise RuntimeError(f"MINDER {label} is not translucent")
+            if surface.graphicsEffect() is not None:
+                raise RuntimeError(f"MINDER {label} unexpectedly has a shadow effect")
+
         # Exercise the same queued signal path used by the voice worker thread.
         ui.set_state("LISTENING")
         app.processEvents()
@@ -123,6 +143,7 @@ def main() -> int:
         print(f"[OK] Main window: {window.windowTitle()}")
         print("[OK] HUD and central content: constructed")
         print("[OK] Liquid Glass transcript surface: constructed")
+        print("[OK] Four main-window frame surfaces: translucent")
         print("[OK] Queued state update: delivered")
         print("[OK] Nine glass overlays: constructed with safe fixtures")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
