@@ -74,6 +74,35 @@ def main() -> int:
             if surface.graphicsEffect() is not None:
                 raise RuntimeError(f"MINDER {label} unexpectedly has a shadow effect")
 
+        # Check the actual layout at its minimum supported window size and at
+        # the normal starting size. The centre HUD must keep enough room for its
+        # 300px minimum, and the sidebars must not overlap or escape the client.
+        def check_layout(width: int, height: int, label: str) -> None:
+            window.resize(width, height)
+            app.processEvents()
+            central = window.centralWidget()
+            left = window._left_panel.geometry()
+            centre = window._center_split.geometry()
+            right = window._right_panel.geometry()
+            bounds = central.rect()
+            if centre.width() < 300:
+                raise RuntimeError(
+                    f"{label} layout leaves only {centre.width()}px for the centre HUD")
+            if left.left() < bounds.left() or left.right() >= centre.left():
+                raise RuntimeError(f"{label} left sidebar overlaps the centre HUD")
+            if centre.right() >= right.left():
+                raise RuntimeError(f"{label} centre HUD overlaps the right sidebar")
+            if right.right() >= bounds.right() + 1:
+                raise RuntimeError(f"{label} right sidebar exceeds the window")
+            if window._header_panel.width() != central.width():
+                raise RuntimeError(f"{label} header does not span the client width")
+            if window._footer_panel.width() != central.width():
+                raise RuntimeError(f"{label} footer does not span the client width")
+
+        check_layout(window.minimumWidth(), window.minimumHeight(), "minimum-size")
+        check_layout(980, 700, "default-size")
+        app.processEvents()
+
         # Exercise the same queued signal path used by the voice worker thread.
         ui.set_state("LISTENING")
         app.processEvents()
@@ -144,6 +173,7 @@ def main() -> int:
         print("[OK] HUD and central content: constructed")
         print("[OK] Liquid Glass transcript surface: constructed")
         print("[OK] Four main-window frame surfaces: translucent")
+        print("[OK] Minimum/default window layouts: non-overlapping")
         print("[OK] Queued state update: delivered")
         print("[OK] Nine glass overlays: constructed with safe fixtures")
         print("RESULT: MINDER DESKTOP UI STARTUP PASSED")
