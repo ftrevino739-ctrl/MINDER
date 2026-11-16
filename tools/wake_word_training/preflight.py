@@ -132,10 +132,16 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
             folder = resolve(root, str(item))
             if not folder.is_dir():
                 errors.append(f"{key} directory is missing: {folder}")
-            # Upstream train.py uses os.scandir(folder), not rglob(); nested
-            # files are invisible to it and would otherwise fail at runtime.
-            elif not any(p.is_file() for p in folder.iterdir()):
-                errors.append(f"{key} directory contains no top-level files: {folder}")
+            # Upstream train.py consumes every os.scandir(folder) entry as an
+            # audio path; it neither recurses nor filters out subdirectories.
+            else:
+                entries = list(folder.iterdir())
+                if not entries:
+                    errors.append(f"{key} directory is empty: {folder}")
+                elif any(not item.is_file() for item in entries):
+                    errors.append(
+                        f"{key} must contain only top-level files (no nested directories): {folder}"
+                    )
 
     validation = resolve(root, str(config.get("false_positive_validation_data_path", "")))
     if not validation.is_file():
