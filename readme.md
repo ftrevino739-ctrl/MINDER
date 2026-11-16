@@ -39,7 +39,7 @@ It checks the Python/dependency environment, installed HUD asset, configured pro
 visible default audio devices, and whether Playwright's Chromium and Firefox executables are
 installed. The browser check does not launch a browser, download files, or contact a website.
 The doctor never records audio, makes network requests, changes settings, or prints API-key values. A successful report is only a basic environment check;
-it does not replace the real Windows acceptance checklist in `MINDER_SECURITY_REVIEW.md`.
+it does not replace the real Windows acceptance checklist in `MINDER_SECURITY_REVIEW.md` or the focused [real voice acceptance procedure](MINDER_VOICE_ACCEPTANCE.md).
 
 The setup script installs the dependencies listed in `requirements.txt` and attempts to install the Chromium and Firefox browsers used by browser automation. The browser download is non-fatal; it can be retried later with:
 
