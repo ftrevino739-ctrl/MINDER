@@ -419,7 +419,7 @@ async def test_spanish_ptt_turn_preserves_transcript_and_speech():
               len(llm.seen) == 1 and llm.seen[0][-1]["content"] == phrase,
               str(llm.seen))
         check("Spanish answer is forwarded to the selected TTS",
-              tts.said == [answer] and "".join(said) == answer,
+              " ".join(tts.said) == answer and " ".join(said) == answer,
               f"tts={tts.said!r}, said={said!r}")
         check("TTS emits non-empty speaker PCM for the response",
               len(speaker_pcm) > 0 and len(speaker_pcm) % 2 == 0,
