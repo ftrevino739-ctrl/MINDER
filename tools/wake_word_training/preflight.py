@@ -60,9 +60,15 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
 
     if config.get("model_name") != "hey_minder":
         errors.append("model_name must be exactly 'hey_minder'.")
-    if "hey minder" not in [str(x).strip().lower() for x in config.get("target_phrase", [])]:
-        errors.append("target_phrase must include 'hey minder'.")
-    if int(config.get("n_samples", 0)) < 20000:
+    phrases = config.get("target_phrase")
+    if not isinstance(phrases, list) or "hey minder" not in [str(x).strip().lower() for x in phrases]:
+        errors.append("target_phrase must be a list containing 'hey minder'.")
+    try:
+        sample_count = int(config.get("n_samples", 0))
+    except (TypeError, ValueError):
+        sample_count = 0
+        errors.append("n_samples must be a positive integer.")
+    if sample_count < 20000:
         warnings.append("Fewer than 20,000 positive training samples are configured.")
     if not isinstance(config.get("feature_data_files"), dict):
         errors.append("feature_data_files must be a mapping of class names to .npy paths.")
@@ -91,10 +97,12 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
     if not validation.is_file():
         errors.append(f"False-positive validation feature file is missing: {validation}")
 
-    for name, value in (config.get("feature_data_files") or {}).items():
-        feature_file = resolve(root, str(value))
-        if not feature_file.is_file():
-            errors.append(f"Feature dataset '{name}' is missing: {feature_file}")
+    feature_files = config.get("feature_data_files")
+    if isinstance(feature_files, dict):
+        for name, value in feature_files.items():
+            feature_file = resolve(root, str(value))
+            if not feature_file.is_file():
+                errors.append(f"Feature dataset '{name}' is missing: {feature_file}")
 
     for module in ("numpy", "scipy", "torch", "yaml"):
         if importlib.util.find_spec(module) is None:
