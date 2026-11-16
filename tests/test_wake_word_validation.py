@@ -83,8 +83,10 @@ class WakeWordValidationTests(unittest.TestCase):
             wav_path = nested / "sample.wav"
             _write_wav(wav_path)
             self.assertEqual(VALIDATOR.wav_files(root), [wav_path])
+            empty = root / "speaker_b"
+            empty.mkdir()
             with self.assertRaisesRegex(FileNotFoundError, "No .wav files"):
-                VALIDATOR.wav_files(root / "speaker_b")
+                VALIDATOR.wav_files(empty)
 
 
 if __name__ == "__main__":
