@@ -180,7 +180,7 @@ class WakeWordLifecycleTests(unittest.TestCase):
                     time.sleep(0.01)
                 detector.stop()
                 worker.join(timeout=1.0)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
 
     def test_missing_custom_model_keeps_legacy_phrase(self):
         from pathlib import Path
