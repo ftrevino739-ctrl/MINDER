@@ -50,6 +50,16 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python minder_ui_check.py
+      - name: Smoke-test Liquid Glass layout at 125% display scaling
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1.25"
+        run: python minder_ui_check.py
+      - name: Smoke-test Liquid Glass layout at 150% display scaling
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1.5"
+        run: python minder_ui_check.py
       - name: Run unit and safety tests on Windows
         env:
           QT_QPA_PLATFORM: offscreen
