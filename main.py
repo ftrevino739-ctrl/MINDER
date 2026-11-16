@@ -718,6 +718,10 @@ class JarvisLive:
 
     # ── Wake word: state machine ─────────────────────────────────────────────
 
+    def _wake_phrase(self) -> str:
+        """Return the actual active detector phrase, including legacy fallback."""
+        return getattr(self._wake_detector, "phrase", "Hey Jarvis")
+
     def _wake_state(self) -> dict:
         # A loaded, running detector is definitively ready; otherwise fall back
         # to the cheap on-disk model-file check (no Model construction).
@@ -737,7 +741,7 @@ class JarvisLive:
         return True
 
     def _on_wake_detected(self) -> None:
-        """Called from the detector thread when 'Hey Jarvis' is heard."""
+        """Called from the detector thread when the selected wake phrase is heard."""
         self.wake(reason="wake word")
 
     def wake(self, reason: str = "wake word") -> None:
@@ -755,7 +759,7 @@ class JarvisLive:
         self._awake = False
         self.set_speaking(False)
         self.ui.set_state("SLEEPING")
-        self.ui.write_log(f"SYS: Sleeping — {reason}. Say 'Hey Jarvis' to wake me.")
+        self.ui.write_log(f"SYS: Sleeping — {reason}. Say '{self._wake_phrase()}' to wake me.")
 
     async def _run_sleep_watch(self) -> None:
         """Auto-sleep after the configured silence window (wake-word mode only)."""
@@ -978,9 +982,9 @@ class JarvisLive:
             return
         # Respect wake-word sleep: a typed command must not be answered while
         # asleep either (the sleep gate is not just for the mic). Wake first with
-        # "Hey Jarvis" or the WAKE NOW button.
+        # The selected wake phrase or the WAKE NOW button.
         if self._wake_enabled and not self._awake:
-            self.ui.write_log("SYS: I'm asleep — say 'Hey Jarvis' or tap WAKE NOW first.")
+            self.ui.write_log(f"SYS: I'm asleep — say '{self._wake_phrase()}' or tap WAKE NOW first.")
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -2543,7 +2547,7 @@ class JarvisLive:
                         self._ensure_wake_detector()
                         self._awake = False
                         self.ui.set_state("SLEEPING")
-                        self.ui.write_log("SYS: MINDER online — sleeping. Say 'Hey Jarvis' to wake me.")
+                        self.ui.write_log(f"SYS: MINDER online — sleeping. Say '{self._wake_phrase()}' to wake me.")
                     else:
                         self._awake = True
                         self.ui.set_state("LISTENING")
