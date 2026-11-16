@@ -139,8 +139,16 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
         if not piper_model_config.is_file() or piper_model_config.stat().st_size == 0:
             errors.append(f"Default Piper checkpoint config is missing: {piper_model_config}")
 
-    if not (root / "openwakeword" / "__init__.py").is_file():
+    openwakeword_dir = root / "openwakeword"
+    if not (openwakeword_dir / "__init__.py").is_file():
         errors.append("openWakeWord Python package is missing from the training checkout.")
+    for model_name in ("melspectrogram.onnx", "embedding_model.onnx"):
+        model_file = openwakeword_dir / "resources" / "models" / model_name
+        if not model_file.is_file() or model_file.stat().st_size == 0:
+            errors.append(
+                f"openWakeWord feature model is missing: {model_file} "
+                "(prepare it with openwakeword.utils.download_models())."
+            )
 
     for key in ("rir_paths", "background_paths"):
         paths = config.get(key, [])
