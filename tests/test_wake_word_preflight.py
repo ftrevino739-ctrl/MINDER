@@ -65,6 +65,17 @@ class WakeWordPreflightTests(unittest.TestCase):
                  patch.object(MODULE.importlib.util, "find_spec", return_value=object()):
                 errors, _ = MODULE.inspect_workspace(root, config_path, 0)
         self.assertTrue(any("only top-level files" in error for error in errors))
+        self.assertTrue(any("Default Piper LibriTTS checkpoint is missing" in error
+                            for error in errors))
+        self.assertTrue(any("melspectrogram.onnx" in error for error in errors))
+        self.assertTrue(any("embedding_model.onnx" in error for error in errors))
+
+    def test_preflight_covers_upstream_training_imports(self):
+        for module in ("torchinfo", "torchmetrics", "pronouncing",
+                       "audiomentations", "torch_audiomentations",
+                       "speechbrain", "torchaudio", "mutagen",
+                       "acoustics", "webrtcvad", "espeak_phonemizer"):
+            self.assertIn(module, MODULE.REQUIRED_TRAINING_MODULES)
 
     def test_rejects_invalid_batch_sizes_and_background_duplication(self):
         with tempfile.TemporaryDirectory() as folder:
