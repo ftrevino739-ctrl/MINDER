@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -63,6 +64,16 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
     phrases = config.get("target_phrase")
     if not isinstance(phrases, list) or "hey minder" not in [str(x).strip().lower() for x in phrases]:
         errors.append("target_phrase must be a list containing 'hey minder'.")
+    if not isinstance(config.get("custom_negative_phrases"), list):
+        errors.append("custom_negative_phrases must be a list.")
+    if config.get("model_type") not in ("dnn", "rnn"):
+        errors.append("model_type must be 'dnn' or 'rnn'.")
+    try:
+        fp_target = float(config.get("target_false_positives_per_hour"))
+        if fp_target <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append("target_false_positives_per_hour must be a positive number.")
     try:
         sample_count = int(config.get("n_samples", 0))
     except (TypeError, ValueError):
@@ -144,7 +155,7 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
     output_parent = output_dir if output_dir.exists() else output_dir.parent
     if not output_parent.is_dir():
         errors.append(f"Output directory parent does not exist: {output_parent}")
-    elif not __import__("os").access(output_parent, __import__("os").W_OK):
+    elif not os.access(output_parent, os.W_OK):
         errors.append(f"Output directory parent is not writable: {output_parent}")
 
     usage = shutil.disk_usage(root)
@@ -170,6 +181,8 @@ def main() -> int:
     parser.add_argument("--min-free-gb", type=float, default=20.0,
                         help="Warn below this free-space threshold (default: 20 GiB)")
     args = parser.parse_args()
+    if args.min_free_gb < 0:
+        parser.error("--min-free-gb cannot be negative")
 
     root = args.training_root.expanduser().resolve()
     config = args.config.expanduser()
