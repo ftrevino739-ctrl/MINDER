@@ -44,6 +44,24 @@ Use the official openWakeWord training notebook/repository to prepare these
 inputs and follow its current download instructions. Do not substitute
 unverified third-party model files or rename `hey_jarvis.onnx`.
 
+## Read-only preflight
+
+Before running any training stage, place a copy of `hey_minder.yml` in the
+openWakeWord checkout (or pass its absolute path) and run this from the MINDER
+repository root. The preflight checks the trainer, YAML structure, Piper
+entrypoint, dataset paths, Python dependencies, and free disk space. It does
+not download, create, record, or train anything:
+
+```powershell
+python tools/wake_word_training/preflight.py `
+  --training-root "PATH\\TO\\openWakeWord" `
+  --config "PATH\\TO\\openWakeWord\\hey_minder.yml"
+```
+
+A failed preflight means do not start training until the reported missing
+inputs are fixed. Its default 20 GiB free-space threshold is a warning, not a
+claim that 20 GiB is sufficient for every training setup.
+
 ## Training stages
 
 Run from the openWakeWord checkout with the MINDER config available at
@@ -56,9 +74,10 @@ python openwakeword/train.py --training_config hey_minder.yml --augment_clips
 python openwakeword/train.py --training_config hey_minder.yml --train_model
 ```
 
-The expected ONNX output is normally
-`artifacts/hey_minder/hey_minder.onnx`. Verify the actual output path emitted
-by the trainer before copying it to MINDER's
+With `output_dir: "./artifacts/hey_minder"`, the upstream trainer's ONNX
+export is expected at `artifacts/hey_minder/hey_minder.onnx` only if its export
+routine creates a model subdirectory; verify the actual path printed by the
+trainer before copying it to MINDER's
 `models/wake/hey_minder.onnx`.
 
 Training is an offline build operation. It does not need MINDER's microphone
