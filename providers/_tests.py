@@ -355,6 +355,86 @@ async def test_push_to_talk_waits_for_release_before_transcribing():
         await engine.close()
 
 
+async def test_spanish_ptt_turn_preserves_transcript_and_speech():
+    """Spanish PTT audio must survive STT -> LLM -> TTS without text loss."""
+    import numpy as np
+
+    from providers.engine_pipeline import PipelineEngine
+
+    section("[1d] Spanish push-to-talk preserves the full voice turn")
+
+    class SpanishSTT(FakeSTT):
+        async def transcribe(self, pcm, sample_rate=16000, language="", log=None):
+            self.got = len(pcm)
+            self.sample_rate = sample_rate
+            self.language = language
+            return "Hola, MINDER. ¿Puedes ayudarme con mi computadora?"
+
+    phrase = "Hola, MINDER. ¿Puedes ayudarme con mi computadora?"
+    answer = "¡Claro! Dime qué necesitas hacer."
+    stt, tts = SpanishSTT(), FakeTTS()
+    llm = FakeLLM([[{"text": answer}]])
+    engine = PipelineEngine(llm, stt=stt, tts=tts, config=Cfg(),
+                            log=lambda _message: None)
+    engine.auto_turn = False
+
+    completed = asyncio.Event()
+    received = []
+
+    async def collect():
+        async for message in engine.receive():
+            received.append(message)
+            if (message.server_content
+                    and message.server_content.turn_complete):
+                completed.set()
+                return
+
+    task = asyncio.create_task(collect())
+    speech = np.full(160, 3500, dtype=np.int16).tobytes()
+    try:
+        for _ in range(40):
+            await engine.send_realtime_input(audio=speech)
+
+        transcript = await engine.flush_microphone(16000)
+        await asyncio.wait_for(completed.wait(), 10)
+
+        heard = [
+            m.server_content.input_transcription.text
+            for m in received
+            if m.server_content and m.server_content.input_transcription
+        ]
+        said = [
+            m.server_content.output_transcription.text
+            for m in received
+            if m.server_content and m.server_content.output_transcription
+        ]
+        speaker_pcm = b"".join(
+            m.data for m in received if m.data
+        )
+
+        check("Spanish transcript keeps accents and punctuation",
+              transcript == phrase and heard == [phrase],
+              f"transcript={transcript!r}, heard={heard!r}")
+        check("LLM receives the exact Spanish transcript",
+              len(llm.seen) == 1 and llm.seen[0][-1]["content"] == phrase,
+              str(llm.seen))
+        check("Spanish answer is forwarded to the selected TTS",
+              tts.said == [answer] and "".join(said) == answer,
+              f"tts={tts.said!r}, said={said!r}")
+        check("TTS emits non-empty speaker PCM for the response",
+              len(speaker_pcm) > 0 and len(speaker_pcm) % 2 == 0,
+              f"{len(speaker_pcm)} bytes")
+        check("STT receives the app's 16 kHz microphone format",
+              stt.sample_rate == 16000 and stt.got == len(speech) * 40,
+              f"rate={stt.sample_rate}, bytes={stt.got}")
+    except Exception as exc:
+        check("Spanish PTT voice turn completes",
+              False, f"{type(exc).__name__}: {exc}")
+    finally:
+        task.cancel()
+        await engine.close()
+
+
 async def test_taskgroup_and_tool_loop():
     """main.py answers a tool call from INSIDE its loop over receive(). An
     engine that waits there deadlocks the turn; one that raises there cancels
@@ -1518,6 +1598,7 @@ async def main() -> int:
     await test_real_caller_shapes()
     await test_auto_vad_drives_the_full_voice_pipeline()
     await test_push_to_talk_waits_for_release_before_transcribing()
+    await test_spanish_ptt_turn_preserves_transcript_and_speech()
     await test_taskgroup_and_tool_loop()
     await test_full_stack_over_http()
     test_vision_is_asked_not_guessed()
