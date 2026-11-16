@@ -13,6 +13,13 @@ import shutil
 import sys
 from pathlib import Path
 
+REQUIRED_TRAINING_MODULES = (
+    "numpy", "scipy", "torch", "torchinfo", "torchmetrics", "tqdm", "yaml",
+    "pronouncing", "audiomentations", "torch_audiomentations", "speechbrain",
+    "torchaudio", "mutagen", "acoustics", "webrtcvad", "espeak_phonemizer",
+    "onnx", "onnxruntime", "sklearn", "requests",
+)
+
 REQUIRED_CONFIG = {
     "model_name", "target_phrase", "custom_negative_phrases", "n_samples",
     "n_samples_val", "tts_batch_size", "augmentation_batch_size",
@@ -122,6 +129,18 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
     piper = resolve(root, str(config.get("piper_sample_generator_path", "")))
     if not piper.is_dir() or not (piper / "generate_samples.py").is_file():
         errors.append(f"Piper sample generator is missing or incomplete: {piper}")
+    else:
+        # openWakeWord calls generate_samples() without a model argument.
+        # The dscripka fork therefore uses its default LibriTTS checkpoint.
+        piper_model = piper / "models" / "en-us-libritts-high.pt"
+        piper_model_config = Path(str(piper_model) + ".json")
+        if not piper_model.is_file() or piper_model.stat().st_size == 0:
+            errors.append(f"Default Piper LibriTTS checkpoint is missing: {piper_model}")
+        if not piper_model_config.is_file() or piper_model_config.stat().st_size == 0:
+            errors.append(f"Default Piper checkpoint config is missing: {piper_model_config}")
+
+    if not (root / "openwakeword" / "__init__.py").is_file():
+        errors.append("openWakeWord Python package is missing from the training checkout.")
 
     for key in ("rir_paths", "background_paths"):
         paths = config.get(key, [])
@@ -153,9 +172,13 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
             if not feature_file.is_file():
                 errors.append(f"Feature dataset '{name}' is missing: {feature_file}")
 
-    for module in ("numpy", "scipy", "torch", "yaml"):
-        if importlib.util.find_spec(module) is None:
-            errors.append(f"Python dependency is missing: {module}")
+    for module in REQUIRED_TRAINING_MODULES:
+        try:
+            available = importlib.util.find_spec(module) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            available = False
+        if not available:
+            errors.append(f"Python training dependency is missing: {module}")
 
     output_dir = resolve(root, str(config.get("output_dir", "")))
     output_parent = output_dir if output_dir.exists() else output_dir.parent
