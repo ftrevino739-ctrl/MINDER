@@ -74,8 +74,9 @@ python openwakeword/train.py --training_config hey_minder.yml --augment_clips
 python openwakeword/train.py --training_config hey_minder.yml --train_model
 ```
 
-Verify the output path printed by the trainer before copying it to MINDER's
-`models/wake/hey_minder.onnx`.
+With the current `output_dir: "./artifacts/hey_minder"`, the trainer should
+export `artifacts/hey_minder/hey_minder.onnx`. Confirm the file exists after
+training before copying it to MINDER's `models/wake/hey_minder.onnx`.
 
 Training is an offline build operation. It does not need MINDER's microphone
 and must not record or upload the user's voice. The model should include
