@@ -85,3 +85,27 @@ real speakers before release.
 Only after every gate passes may the custom phrase become the default. Until
 then, leave the feature disabled by default and keep the legacy fallback
 explicitly labelled.
+
+## Offline candidate-model check
+
+After training, collect two folders of **already available** WAV test clips:
+one with the wake phrase spoken, and one with representative negative audio
+(including hard negatives, ordinary conversation, music and TV). The validator
+does not record audio. Every WAV must be 16 kHz, mono, PCM16.
+
+From the MINDER repository root, run:
+
+```powershell
+python tools/wake_word_training/validate_model.py `
+  --model "PATH\\TO\\hey_minder.onnx" `
+  --positive-dir "PATH\\TO\\positive_wavs" `
+  --negative-dir "PATH\\TO\\negative_wavs"
+```
+
+The script uses the same openWakeWord ONNX inference API and the runtime's
+two-consecutive-frame / two-second-cooldown policy. It reports positive clip
+recall and false activations per hour. Exit code 0 means every supplied
+positive clip triggered and the measured negative rate was <= 0.2/hour; it is
+only a preliminary dataset gate, not proof of real-world performance. Include
+multiple real speakers and held-out room/background recordings before
+accepting the model.
