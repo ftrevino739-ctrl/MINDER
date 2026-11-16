@@ -64,7 +64,7 @@ class WakeWordPreflightTests(unittest.TestCase):
             with patch.object(MODULE, "load_config", return_value=config), \
                  patch.object(MODULE.importlib.util, "find_spec", return_value=object()):
                 errors, _ = MODULE.inspect_workspace(root, config_path, 0)
-        self.assertTrue(any("no top-level files" in error for error in errors))
+        self.assertTrue(any("only top-level files" in error for error in errors))
 
     def test_rejects_invalid_batch_sizes_and_background_duplication(self):
         with tempfile.TemporaryDirectory() as folder:
