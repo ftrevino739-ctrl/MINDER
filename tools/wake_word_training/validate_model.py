@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 import wave
 from pathlib import Path
 
@@ -90,18 +89,21 @@ def main() -> int:
 
     model_key = args.model.stem.lower()
     try:
-        model = Model(wakeword_models=[str(args.model)], inference_framework="onnx")
+        # Use a fresh model instance for each clip so recurrent/mel state from
+        # one WAV cannot leak into the next clip's score.
         positives = wav_files(args.positive_dir)
         negatives = wav_files(args.negative_dir)
 
         positive_hits = 0
         for path in positives:
+            model = Model(wakeword_models=[str(args.model)], inference_framework="onnx")
             detected, _, _ = score_file(model, model_key, path, args.threshold)
             positive_hits += int(detected)
 
         false_events = 0
         negative_seconds = 0.0
         for path in negatives:
+            model = Model(wakeword_models=[str(args.model)], inference_framework="onnx")
             _, events, duration = score_file(model, model_key, path, args.threshold)
             false_events += events
             negative_seconds += duration
