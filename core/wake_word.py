@@ -205,6 +205,11 @@ class WakeWordDetector:
             thread.join(timeout=0.25)
 
     @property
+    def phrase(self) -> str:
+        """Human-readable phrase for the model currently selected."""
+        return self._active_phrase
+
+    @property
     def ready(self) -> bool:
         return self._ready
 
