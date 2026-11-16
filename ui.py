@@ -88,7 +88,7 @@ APP_VERSION  = "MINDER"
 APP_PROTOCOL = APP_VERSION.split()[-1]
 
 _DEFAULT_W, _DEFAULT_H = 980, 700
-_MIN_W,     _MIN_H     = 820, 580
+_MIN_W,     _MIN_H     = 900, 580
 _LEFT_W  = 148
 _RIGHT_W = 340
 
