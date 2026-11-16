@@ -74,10 +74,7 @@ python openwakeword/train.py --training_config hey_minder.yml --augment_clips
 python openwakeword/train.py --training_config hey_minder.yml --train_model
 ```
 
-With `output_dir: "./artifacts/hey_minder"`, the upstream trainer's ONNX
-export is expected at `artifacts/hey_minder/hey_minder.onnx` only if its export
-routine creates a model subdirectory; verify the actual path printed by the
-trainer before copying it to MINDER's
+Verify the output path printed by the trainer before copying it to MINDER's
 `models/wake/hey_minder.onnx`.
 
 Training is an offline build operation. It does not need MINDER's microphone
