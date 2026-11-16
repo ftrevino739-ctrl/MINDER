@@ -50,8 +50,8 @@ Before running any training stage, place a copy of `hey_minder.yml` in the
 openWakeWord checkout (or pass its absolute path) and run this from the MINDER
 repository root. The preflight checks the trainer, YAML structure, Piper
 entrypoint, required feature files, positive batch sizes, background-path
-counts, writable output parent, top-level RIR/background files (the upstream
-trainer scans these non-recursively), Python dependencies, and free disk space. It does
+counts, writable output parent, flat RIR/background folders containing only top-level files (the upstream
+trainer scans these non-recursively and does not filter subdirectories), Python dependencies, and free disk space. It does
 not download, create, record, or train anything:
 
 ```powershell
