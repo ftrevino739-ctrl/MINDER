@@ -46,14 +46,28 @@ pipeline:
 - `openwakeword/resources/models/melspectrogram.onnx` and
   `embedding_model.onnx` — the feature-extraction models used by the trainer.
 
-Use the official openWakeWord repository and its `download_models()` helper
-to prepare the feature-extraction models. Clone the dscripka Piper generator
-fork, not the unrelated package-only API, because openWakeWord imports its
-top-level `generate_samples.py`. Download the LibriTTS checkpoint into the
-fork's `models` directory and retain the matching JSON metadata already
-shipped there. Prepare the datasets using the official training notebook and
-follow its current download instructions. Do not substitute unverified
-third-party model files or rename `hey_jarvis.onnx`.
+From the MINDER repo root, the following commands illustrate the expected
+Piper layout (the fork's matching JSON metadata is already tracked):
+
+```powershell
+git clone https://github.com/dscripka/piper-sample-generator vendor/piper-sample-generator
+Invoke-WebRequest `
+  -Uri "https://github.com/rhasspy/piper-sample-generator/releases/download/v1.0.0/en-us-libritts-high.pt" `
+  -OutFile "vendor/piper-sample-generator/models/en-us-libritts-high.pt"
+```
+
+In the openWakeWord checkout, prepare its feature models with:
+
+```powershell
+python -c "from openwakeword.utils import download_models; download_models()"
+```
+
+Install the training extras documented by the official openWakeWord project
+and the Piper fork's requirements; the regular MINDER runtime dependencies are
+not enough for training. The preflight reports missing imports before any
+training command is run. Prepare the datasets using the official training
+notebook and follow its current download instructions. Do not substitute
+unverified third-party model files or rename `hey_jarvis.onnx`.
 
 ## Read-only preflight
 
