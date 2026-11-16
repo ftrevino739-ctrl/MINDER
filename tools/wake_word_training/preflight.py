@@ -70,8 +70,39 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
         errors.append("n_samples must be a positive integer.")
     if sample_count < 20000:
         warnings.append("Fewer than 20,000 positive training samples are configured.")
-    if not isinstance(config.get("feature_data_files"), dict):
-        errors.append("feature_data_files must be a mapping of class names to .npy paths.")
+    feature_files = config.get("feature_data_files")
+    if not isinstance(feature_files, dict) or not feature_files:
+        errors.append("feature_data_files must be a non-empty mapping of class names to .npy paths.")
+        feature_files = {}
+    elif "ACAV100M_sample" not in feature_files:
+        errors.append("feature_data_files must include the ACAV100M_sample negative dataset.")
+
+    batch_sizes = config.get("batch_n_per_class")
+    if not isinstance(batch_sizes, dict):
+        errors.append("batch_n_per_class must be a mapping.")
+    else:
+        expected_classes = set(feature_files) | {"positive", "adversarial_negative"}
+        missing_batches = sorted(expected_classes - batch_sizes.keys())
+        if missing_batches:
+            errors.append("batch_n_per_class is missing: " + ", ".join(missing_batches))
+        for label, value in batch_sizes.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                errors.append(f"batch_n_per_class[{label!r}] must be a positive integer.")
+
+    for key in ("n_samples_val", "tts_batch_size", "augmentation_batch_size",
+                "augmentation_rounds", "steps", "layer_size", "max_negative_weight"):
+        value = config.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            errors.append(f"{key} must be a positive integer.")
+
+    rates = config.get("background_paths_duplication_rate", [])
+    background_paths = config.get("background_paths", [])
+    if not isinstance(rates, list) or not isinstance(background_paths, list):
+        errors.append("background_paths and background_paths_duplication_rate must be lists.")
+    elif rates and len(rates) != len(background_paths):
+        errors.append("background_paths_duplication_rate must match background_paths length.")
+    elif any(not isinstance(rate, int) or isinstance(rate, bool) or rate < 1 for rate in rates):
+        errors.append("Every background duplication rate must be a positive integer.")
 
     trainer = root / "openwakeword" / "train.py"
     if not trainer.is_file():
@@ -90,14 +121,15 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
             folder = resolve(root, str(item))
             if not folder.is_dir():
                 errors.append(f"{key} directory is missing: {folder}")
-            elif not any(p.is_file() for p in folder.rglob("*")):
-                errors.append(f"{key} directory contains no files: {folder}")
+            # Upstream train.py uses os.scandir(folder), not rglob(); nested
+            # files are invisible to it and would otherwise fail at runtime.
+            elif not any(p.is_file() for p in folder.iterdir()):
+                errors.append(f"{key} directory contains no top-level files: {folder}")
 
     validation = resolve(root, str(config.get("false_positive_validation_data_path", "")))
     if not validation.is_file():
         errors.append(f"False-positive validation feature file is missing: {validation}")
 
-    feature_files = config.get("feature_data_files")
     if isinstance(feature_files, dict):
         for name, value in feature_files.items():
             feature_file = resolve(root, str(value))
@@ -107,6 +139,13 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
     for module in ("numpy", "scipy", "torch", "yaml"):
         if importlib.util.find_spec(module) is None:
             errors.append(f"Python dependency is missing: {module}")
+
+    output_dir = resolve(root, str(config.get("output_dir", "")))
+    output_parent = output_dir if output_dir.exists() else output_dir.parent
+    if not output_parent.is_dir():
+        errors.append(f"Output directory parent does not exist: {output_parent}")
+    elif not __import__("os").access(output_parent, __import__("os").W_OK):
+        errors.append(f"Output directory parent is not writable: {output_parent}")
 
     usage = shutil.disk_usage(root)
     free_gb = usage.free / (1024 ** 3)
