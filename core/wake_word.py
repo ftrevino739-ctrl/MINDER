@@ -21,11 +21,15 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
-# Pretrained openwakeword model that listens for "Hey Jarvis".
+# Legacy fallback. Select the custom model only after a trained file exists.
 WAKE_MODEL = "hey_jarvis"
+WAKE_PHRASE = "Hey Jarvis"
+CUSTOM_WAKE_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "wake" / "hey_minder.onnx"
+CUSTOM_WAKE_PHRASE = "Hey MINDER"
 # Score in [0,1]; above this counts as a detection. Tunable per environment.
 DEFAULT_THRESHOLD = 0.5
 # Mic frames arrive at 16 kHz int16; this is just the detector's input rate.
@@ -56,7 +60,8 @@ def is_ready() -> bool:
         models_dir = Path(openwakeword.__file__).resolve().parent / "resources" / "models"
         if not models_dir.is_dir():
             return False
-        has_wake = (any(models_dir.glob(f"{WAKE_MODEL}*.onnx"))
+        has_wake = (CUSTOM_WAKE_MODEL_PATH.is_file()
+                    or any(models_dir.glob(f"{WAKE_MODEL}*.onnx"))
                     or any(models_dir.glob(f"{WAKE_MODEL}*.tflite")))
         has_mel = (any(models_dir.glob("melspectrogram*.onnx"))
                    or any(models_dir.glob("melspectrogram*.tflite")))
@@ -116,9 +121,18 @@ class WakeWordDetector:
     def __init__(self, on_detect: Callable[[], None],
                  threshold: float = DEFAULT_THRESHOLD,
                  logger: Callable[[str], None] = print,
-                 notify: Callable[[str], None] | None = None):
+                 notify: Callable[[str], None] | None = None,
+                 model_path: str | Path | None = None,
+                 consecutive_hits: int = 2,
+                 cooldown_seconds: float = 2.0):
         self._on_detect = on_detect
         self._threshold = threshold
+        self._model_path = Path(model_path) if model_path else CUSTOM_WAKE_MODEL_PATH
+        self._active_model = str(self._model_path) if self._model_path.is_file() else WAKE_MODEL
+        self._active_phrase = CUSTOM_WAKE_PHRASE if self._model_path.is_file() else WAKE_PHRASE
+        self._consecutive_hits = max(1, int(consecutive_hits))
+        self._cooldown_seconds = max(0.0, float(cooldown_seconds))
+        self._last_detection = float("-inf")
         self._logger = logger
         self._notify = notify or (lambda _msg: None)
         self._queue: queue.Queue = queue.Queue(maxsize=50)
@@ -137,7 +151,7 @@ class WakeWordDetector:
         self._ready = False
         try:
             from openwakeword.model import Model
-            model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx")
+            model = Model(wakeword_models=[self._active_model], inference_framework="onnx")
             work_queue: queue.Queue = queue.Queue(maxsize=50)
             stop_event = threading.Event()
             thread = threading.Thread(
@@ -162,7 +176,7 @@ class WakeWordDetector:
             self._notify("Wake word unavailable — use the WAKE NOW button.")
             return False
 
-        self._logger("Wake word: listening for 'Hey Jarvis'.")
+        self._logger(f"Wake word: listening for '{self._active_phrase}'.")
         return True
 
     def stop(self) -> None:
@@ -211,6 +225,8 @@ class WakeWordDetector:
     def _loop(self, work_queue: queue.Queue, stop_event: threading.Event, model) -> None:
         try:
             import numpy as np
+            consecutive = 0
+            model_key = Path(self._active_model).stem.lower()
             while not stop_event.is_set():
                 try:
                     frame = work_queue.get()
@@ -220,15 +236,18 @@ class WakeWordDetector:
                     if stop_event.is_set():
                         break
 
+                    # Only use the selected model score; unrelated outputs
+                    # must never trigger the assistant.
                     score = 0.0
                     if isinstance(scores, dict):
                         for key, value in scores.items():
-                            if "jarvis" in key.lower():
+                            if model_key in key.lower():
                                 score = max(score, float(value))
-                        if score == 0.0 and scores:
-                            score = max(float(value) for value in scores.values())
-
-                    if score >= self._threshold:
+                    consecutive = consecutive + 1 if score >= self._threshold else 0
+                    now = time.monotonic()
+                    if consecutive >= self._consecutive_hits and now - self._last_detection >= self._cooldown_seconds:
+                        self._last_detection = now
+                        consecutive = 0
                         self._drain(work_queue)
                         if stop_event.is_set():
                             break
