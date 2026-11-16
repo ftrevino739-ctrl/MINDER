@@ -54,3 +54,17 @@ to fabricate an ONNX file or to claim the phrase works before a real model is pr
 
 Until the custom model passes the acceptance gate, retain the existing “Hey Jarvis” model only
 as an explicitly labelled legacy fallback. Never tell the user that it recognizes “Hey MINDER”.
+
+
+## Reproducible project training files
+
+The MINDER-specific configuration and preparation notes now live in
+`tools/wake_word_training/`:
+
+- `hey_minder.yml` — openWakeWord training configuration with explicit
+  hard-negative phrases and dataset paths.
+- `README.md` — required inputs, training stages, and acceptance gate.
+
+The expected final runtime destination is documented in
+`models/wake/README.md`. The model itself is not included until it has been
+trained and validated.
