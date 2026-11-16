@@ -124,6 +124,73 @@ class WakeWordLifecycleTests(unittest.TestCase):
         self.assertTrue(any("could not start detector" in item for item in messages))
         self.assertTrue(any("unavailable" in item for item in messages))
 
+    def test_custom_model_path_is_loaded_and_phrase_is_labelled(self):
+        import tempfile
+        from pathlib import Path
+        received = []
+        class Model:
+            def predict(self, frame):
+                return {"hey_minder": 0.0}
+        def factory(**kwargs):
+            received.append(kwargs)
+            return Model()
+        with tempfile.TemporaryDirectory() as folder:
+            model_path = Path(folder) / "hey_minder.onnx"
+            model_path.write_bytes(b"placeholder")
+            logs = []
+            detector = WakeWordDetector(
+                on_detect=lambda: None, logger=logs.append, model_path=model_path
+            )
+            with patch.dict(sys.modules, _mock_audio_modules(factory)):
+                self.assertTrue(detector.start())
+                self.assertEqual(received[0]["wakeword_models"], [str(model_path)])
+                self.assertIn("Hey MINDER", logs[-1])
+                detector.stop()
+
+    def test_custom_detector_requires_two_consecutive_matching_scores(self):
+        import tempfile
+        from pathlib import Path
+        scores = iter([
+            {"unrelated_model": 1.0, "hey_minder": 0.9},
+            {"hey_minder": 0.9},
+            {"hey_minder": 0.0},
+            {"hey_minder": 0.9},
+            {"hey_minder": 0.9},
+        ])
+        calls = []
+        class Model:
+            def predict(self, frame):
+                return next(scores)
+        with tempfile.TemporaryDirectory() as folder:
+            model_path = Path(folder) / "hey_minder.onnx"
+            model_path.write_bytes(b"placeholder")
+            detector = WakeWordDetector(
+                on_detect=lambda: calls.append(True), logger=lambda _message: None,
+                model_path=model_path, consecutive_hits=2, cooldown_seconds=0,
+            )
+            with patch.dict(sys.modules, _mock_audio_modules(lambda **kwargs: Model())):
+                self.assertTrue(detector.start())
+                worker = detector._thread
+                for _ in range(5):
+                    detector.feed(_Frame())
+                # Wait for queued frames to be consumed.
+                import time
+                deadline = time.monotonic() + 1.0
+                while detector._queue.qsize() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                detector.stop()
+                worker.join(timeout=1.0)
+        self.assertEqual(len(calls), 2)
+
+    def test_missing_custom_model_keeps_legacy_phrase(self):
+        from pathlib import Path
+        detector = WakeWordDetector(
+            on_detect=lambda: None, logger=lambda _message: None,
+            model_path=Path("missing/hey_minder.onnx"),
+        )
+        self.assertEqual(detector._active_model, "hey_jarvis")
+        self.assertEqual(detector._active_phrase, "Hey Jarvis")
+
 
 if __name__ == "__main__":
     unittest.main()
