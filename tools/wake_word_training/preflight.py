@@ -256,6 +256,8 @@ def main() -> int:
                         help="Path to hey_minder.yml (absolute or relative to training root)")
     parser.add_argument("--min-free-gb", type=float, default=20.0,
                         help="Warn below this free-space threshold (default: 20 GiB)")
+    parser.add_argument("--verify-imports", action="store_true",
+                        help="Import each training dependency to catch DLL/binary load failures")
     args = parser.parse_args()
     if args.min_free_gb < 0:
         parser.error("--min-free-gb cannot be negative")
