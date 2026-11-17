@@ -56,6 +56,10 @@ Until the custom model passes the acceptance gate, retain the existing “Hey Ja
 as an explicitly labelled legacy fallback. Never tell the user that it recognizes “Hey MINDER”.
 
 
+## Windows 11 compatibility status
+
+The upstream training commands are not an approved native Windows 11 workflow. Review [MINDER_WAKE_WORD_WINDOWS_COMPATIBILITY.md](MINDER_WAKE_WORD_WINDOWS_COMPATIBILITY.md) before installing training dependencies or attempting to train. The current preflight checks prerequisites but does not validate OS-level trainer compatibility. No datasets have been downloaded and no training has started.
+
 ## Reproducible project training files
 
 The MINDER-specific configuration and preparation notes now live in
