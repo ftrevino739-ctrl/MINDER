@@ -7,8 +7,11 @@ starts training. It only checks the supplied checkout/configuration and disk.
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.metadata
 import importlib.util
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -48,7 +51,59 @@ def resolve(root: Path, value: str) -> Path:
     return path if path.is_absolute() else root / path
 
 
-def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tuple[list[str], list[str]]:
+
+def inspect_dependency_runtime(verify_imports: bool = False,
+                               modules: tuple[str, ...] | None = None) -> list[str]:
+    """Check discoverability, optionally import modules, and validate the torch pair."""
+    errors: list[str] = []
+    checked_modules = modules or REQUIRED_TRAINING_MODULES
+
+    for module in checked_modules:
+        try:
+            available = importlib.util.find_spec(module) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            available = False
+        if not available:
+            errors.append(f"Python training dependency is missing: {module}")
+            continue
+        if verify_imports:
+            try:
+                importlib.import_module(module)
+            except Exception as exc:
+                errors.append(
+                    f"Python training dependency cannot be imported: {module}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+    versions: dict[str, str] = {}
+    for distribution in ("torch", "torchaudio"):
+        try:
+            versions[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+
+    if "torch" in versions and "torchaudio" in versions:
+        parsed: dict[str, tuple[int, int, int]] = {}
+        for name, value in versions.items():
+            match = re.match(r"^(\\d+)\\.(\\d+)\\.(\\d+)", value)
+            if match:
+                parsed[name] = tuple(int(part) for part in match.groups())
+        if len(parsed) == 2 and parsed["torch"] != parsed["torchaudio"]:
+            errors.append(
+                "PyTorch and TorchAudio versions must match exactly for this "
+                f"training environment (torch {versions['torch']}, "
+                f"torchaudio {versions['torchaudio']})."
+            )
+        elif len(parsed) != 2:
+            errors.append(
+                "Could not parse installed torch/torchaudio versions for "
+                "compatibility validation."
+            )
+
+    return errors
+
+
+def inspect_workspace(root: Path, config_path: Path, min_free_gb: float,\n                      verify_imports: bool = False) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -180,13 +235,7 @@ def inspect_workspace(root: Path, config_path: Path, min_free_gb: float) -> tupl
             if not feature_file.is_file():
                 errors.append(f"Feature dataset '{name}' is missing: {feature_file}")
 
-    for module in REQUIRED_TRAINING_MODULES:
-        try:
-            available = importlib.util.find_spec(module) is not None
-        except (ImportError, ModuleNotFoundError, ValueError):
-            available = False
-        if not available:
-            errors.append(f"Python training dependency is missing: {module}")
+    errors.extend(inspect_dependency_runtime(verify_imports=verify_imports))
 
     output_dir = resolve(root, str(config.get("output_dir", "")))
     output_parent = output_dir if output_dir.exists() else output_dir.parent
@@ -228,7 +277,7 @@ def main() -> int:
     else:
         config = config.resolve()
 
-    errors, warnings = inspect_workspace(root, config, args.min_free_gb)
+    errors, warnings = inspect_workspace(root, config, args.min_free_gb,\n                                               verify_imports=args.verify_imports)
     for warning in warnings:
         print(f"WARNING: {warning}")
     for error in errors:
