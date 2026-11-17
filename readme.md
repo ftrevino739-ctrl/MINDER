@@ -95,6 +95,7 @@ That suite exercises the provider pipeline with mocks and a local test server. I
 
 - [MINDER project plan](MINDER_PROJECT_PLAN.md)
 - [Hey MINDER wake-word training and acceptance guide](MINDER_WAKE_WORD_TRAINING.md)
+- [Hey MINDER Windows training compatibility audit](MINDER_WAKE_WORD_WINDOWS_COMPATIBILITY.md)
 - [Upstream source](https://github.com/FatihMakes/Mark-LVI)
 - [CC BY-NC 4.0 license](https://creativecommons.org/licenses/by-nc/4.0/)
 
