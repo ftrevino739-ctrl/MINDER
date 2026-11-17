@@ -11,7 +11,6 @@ import importlib
 import importlib.metadata
 import importlib.util
 import os
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -82,23 +81,13 @@ def inspect_dependency_runtime(verify_imports: bool = False,
         except importlib.metadata.PackageNotFoundError:
             pass
 
-    if "torch" in versions and "torchaudio" in versions:
-        parsed: dict[str, tuple[int, int, int]] = {}
-        for name, value in versions.items():
-            match = re.match(r"^(\d+)\.(\d+)\.(\d+)", value)
-            if match:
-                parsed[name] = tuple(int(part) for part in match.groups())
-        if len(parsed) == 2 and parsed["torch"] != parsed["torchaudio"]:
-            errors.append(
-                "PyTorch and TorchAudio versions must match exactly for this "
-                f"training environment (torch {versions['torch']}, "
-                f"torchaudio {versions['torchaudio']})."
-            )
-        elif len(parsed) != 2:
-            errors.append(
-                "Could not parse installed torch/torchaudio versions for "
-                "compatibility validation."
-            )
+    if ("torch" in versions and "torchaudio" in versions
+            and versions["torch"] != versions["torchaudio"]):
+        errors.append(
+            "PyTorch and TorchAudio versions/builds must match exactly for this "
+            f"training environment (torch {versions['torch']}, "
+            f"torchaudio {versions['torchaudio']})."
+        )
 
     return errors
 
