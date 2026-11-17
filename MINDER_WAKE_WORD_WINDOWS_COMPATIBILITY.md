@@ -90,3 +90,21 @@ The candidate's sample YAML is not a drop-in replacement for MINDER's current `h
 6. Validate the resulting ONNX with MINDER's offline validator and real held-out speakers/audio before enabling the phrase.
 
 **Current conclusion:** the preflight work is useful, but it is not yet a Windows training solution. The next phase is to verify and integrate a safe Windows-compatible orchestration—not to start training.
+
+### Source-level review of the candidate (pinned snapshot)
+
+The candidate's inspected main tree currently resolves to commit 1cdca2c3a0edd236608fe3c25023db2045d2de52. This is a review snapshot only; MINDER has not cloned, installed, or executed it.
+
+The source review confirms that its trainer calls the pinned openWakeWord library's Model, AudioFeatures, augment_clips, and mmap_batch_generator, while implementing a separate orchestration. This is a plausible architecture for a Windows port, but it is not a byte-for-byte upstream trainer. It deliberately changes adversarial-text handling, augmentation-round retention, DataLoader worker count, and false-positive validation batching. Those changes need differential tests against the pinned upstream implementation before adoption.
+
+Additional concrete data-integrity blockers found in fetch_data.py:
+
+- RIR downloads are accepted when a filename exists with the expected byte size; no per-file SHA-256 is checked. The early-completion gate accepts any directory with at least 270 WAV files, without validating a manifest of expected names and hashes.
+- The FMA archive is read through HTTP Range requests without a full-archive digest or signed per-member hashes. The downloader checks only the reported archive size.
+- Existing feature/parquet downloads are trusted when their size matches and a .sha256ok marker exists. The marker's contents are not checked and the file is not re-hashed on later runs, so a modified cached file can pass this shortcut.
+- AudioSet and FMA extraction use a .done marker as their completion gate. The marker is not bound to a manifest of output filenames, sizes, or hashes, so partial or modified extracted data can be mistaken for a complete dataset.
+- HTTP resume checks that the server returns status 206, but does not validate the returned Content-Range start/end against the requested byte range.
+
+These are fixable, but they mean the candidate's current resumability and integrity claims are not sufficient for a trusted MINDER training pipeline. Do not run its downloader against the target machine yet.
+
+The candidate config is also a different model configuration (hey_nimbus, 3,000/1,000 clips and 20,000 steps), not MINDER's production hey_minder configuration. Any adapter must explicitly map MINDER's phrase, confusables, counts, paths, thresholds and output contract; silently reusing the candidate YAML is prohibited.
