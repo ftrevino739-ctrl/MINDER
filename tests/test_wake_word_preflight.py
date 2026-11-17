@@ -83,7 +83,15 @@ class WakeWordPreflightTests(unittest.TestCase):
              patch.object(MODULE.importlib.metadata, "version",
                           side_effect=lambda name: versions[name]):
             errors = MODULE.inspect_dependency_runtime(modules=("torch", "torchaudio"))
-        self.assertTrue(any("versions must match exactly" in error for error in errors))
+        self.assertTrue(any("must match exactly" in error for error in errors))
+
+    def test_dependency_runtime_rejects_cpu_cuda_build_mismatch(self):
+        versions = {"torch": "2.8.0+cpu", "torchaudio": "2.8.0+cu128"}
+        with patch.object(MODULE.importlib.util, "find_spec", return_value=object()), \
+             patch.object(MODULE.importlib.metadata, "version",
+                          side_effect=lambda name: versions[name]):
+            errors = MODULE.inspect_dependency_runtime(modules=("torch", "torchaudio"))
+        self.assertTrue(any("must match exactly" in error for error in errors))
 
     def test_dependency_runtime_accepts_matching_torch_pair(self):
         versions = {"torch": "2.8.0+cpu", "torchaudio": "2.8.0+cpu"}
