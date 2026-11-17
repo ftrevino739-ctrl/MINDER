@@ -113,6 +113,14 @@ class WakeWordPreflightTests(unittest.TestCase):
         self.assertTrue(any("cannot be imported: torchaudio" in error
                             and "DLL load failed" in error for error in errors))
 
+    def test_cli_exposes_verify_imports_flag(self):
+        with patch.object(MODULE, "inspect_workspace", return_value=([], [])) as inspect, \
+             patch.object(MODULE.sys, "argv", ["preflight.py", "--training-root", ".",
+                                               "--config", "hey_minder.yml",
+                                               "--verify-imports"]):
+            self.assertEqual(MODULE.main(), 0)
+        self.assertTrue(inspect.call_args.kwargs["verify_imports"])
+
     def test_rejects_invalid_batch_sizes_and_background_duplication(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
