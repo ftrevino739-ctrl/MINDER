@@ -85,7 +85,7 @@ def inspect_dependency_runtime(verify_imports: bool = False,
     if "torch" in versions and "torchaudio" in versions:
         parsed: dict[str, tuple[int, int, int]] = {}
         for name, value in versions.items():
-            match = re.match(r"^(\\d+)\\.(\\d+)\\.(\\d+)", value)
+            match = re.match(r"^(\d+)\.(\d+)\.(\d+)", value)
             if match:
                 parsed[name] = tuple(int(part) for part in match.groups())
         if len(parsed) == 2 and parsed["torch"] != parsed["torchaudio"]:
