@@ -65,6 +65,12 @@ Its README reports approximately 18.3 GB of public training data and a ~20 GB di
 
 Source: [native-Windows training repository and README](https://github.com/Nexus-nimdA/openwakeword-windows-training).
 
+### Additional review blockers in the candidate
+
+Static inspection of its current `fetch_data.py` found that the two large feature files and the AudioSet parquet shard have hard-coded size/SHA-256 checks, but the MIT RIR downloads are not individually hash-verified and the FMA archive is accessed by HTTP byte ranges without an end-to-end archive hash. The README's broad statement that all big data is hash-verified therefore needs qualification. MINDER must add per-file integrity checks before trusting those downloads.
+
+The sample configuration also uses one US-English LibriTTS-R voice. That is useful for broad speaker variation but does not establish robust recognition of natural Mexican-Spanish pronunciation. MINDER's acceptance gate explicitly requires that coverage, so we need additional voice/language synthesis or real-speaker held-out evaluation before accepting the model.
+
 ## MINDER-specific constraints
 
 - Target PC: Windows 11, 8 GB RAM.
