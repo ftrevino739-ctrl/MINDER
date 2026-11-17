@@ -77,6 +77,34 @@ class WakeWordPreflightTests(unittest.TestCase):
                        "acoustics", "webrtcvad", "espeak_phonemizer"):
             self.assertIn(module, MODULE.REQUIRED_TRAINING_MODULES)
 
+    def test_dependency_runtime_rejects_mismatched_torch_pair(self):
+        versions = {"torch": "2.8.0+cpu", "torchaudio": "2.7.1+cpu"}
+        with patch.object(MODULE.importlib.util, "find_spec", return_value=object()), \
+             patch.object(MODULE.importlib.metadata, "version",
+                          side_effect=lambda name: versions[name]):
+            errors = MODULE.inspect_dependency_runtime(modules=("torch", "torchaudio"))
+        self.assertTrue(any("versions must match exactly" in error for error in errors))
+
+    def test_dependency_runtime_accepts_matching_torch_pair(self):
+        versions = {"torch": "2.8.0+cpu", "torchaudio": "2.8.0+cpu"}
+        with patch.object(MODULE.importlib.util, "find_spec", return_value=object()), \
+             patch.object(MODULE.importlib.metadata, "version",
+                          side_effect=lambda name: versions[name]):
+            errors = MODULE.inspect_dependency_runtime(modules=("torch", "torchaudio"))
+        self.assertEqual(errors, [])
+
+    def test_optional_import_check_reports_binary_load_failure(self):
+        with patch.object(MODULE.importlib.util, "find_spec", return_value=object()), \
+             patch.object(MODULE.importlib, "import_module",
+                          side_effect=OSError("DLL load failed")), \
+             patch.object(MODULE.importlib.metadata, "version",
+                          side_effect=MODULE.importlib.metadata.PackageNotFoundError):
+            errors = MODULE.inspect_dependency_runtime(
+                verify_imports=True, modules=("torchaudio",)
+            )
+        self.assertTrue(any("cannot be imported: torchaudio" in error
+                            and "DLL load failed" in error for error in errors))
+
     def test_rejects_invalid_batch_sizes_and_background_duplication(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
