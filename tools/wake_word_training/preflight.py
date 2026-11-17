@@ -103,7 +103,8 @@ def inspect_dependency_runtime(verify_imports: bool = False,
     return errors
 
 
-def inspect_workspace(root: Path, config_path: Path, min_free_gb: float,\n                      verify_imports: bool = False) -> tuple[list[str], list[str]]:
+def inspect_workspace(root: Path, config_path: Path, min_free_gb: float,
+                      verify_imports: bool = False) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -277,7 +278,8 @@ def main() -> int:
     else:
         config = config.resolve()
 
-    errors, warnings = inspect_workspace(root, config, args.min_free_gb,\n                                               verify_imports=args.verify_imports)
+    errors, warnings = inspect_workspace(root, config, args.min_free_gb,
+                                               verify_imports=args.verify_imports)
     for warning in warnings:
         print(f"WARNING: {warning}")
     for error in errors:
