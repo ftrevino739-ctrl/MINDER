@@ -4,6 +4,38 @@ This directory contains the reproducible training configuration for the actual
 `Hey MINDER` phrase. It does **not** contain a fabricated model or any recorded
 personal audio.
 
+## Platform compatibility — important before installing anything
+
+The current `preflight.py` checks files, configuration and whether Python modules
+are discoverable. It does **not** prove that the upstream training script can run
+on the host operating system, nor does it validate binary imports or package
+version compatibility.
+
+- The upstream `openwakeword/train.py` is not currently an approved native
+  Windows 11 training route. Its current training block creates a local
+  `IterableDataset`, uses worker processes and passes `prefetch_factor`; the
+  Windows spawn model needs a separate compatibility treatment. Its false-
+  positive validation path also materializes a large sliding-window array.
+- Do **not** install `openwakeword[full]` as a shortcut. The current upstream
+  extras still include old TensorFlow / ONNX-TF pins and a `torchaudio<1`
+  constraint. They are not required for MINDER's ONNX-only runtime/export path
+  and are a poor fit for a modern Python 3.12 training environment.
+- The dscripka Piper sample-generator fork has its own native dependencies
+  (`webrtcvad`, `espeak_phonemizer`, PyTorch and TorchAudio). Its checkpoint and
+  script being present does not establish that those dependencies install and
+  import successfully on Windows.
+- A community native-Windows orchestration exists, using a pinned openWakeWord
+  checkout, a replacement Piper-ONNX generator and a curated Python 3.12
+  dependency set. It is a **candidate for review, not yet an approved MINDER
+  dependency**: it is a small, single-commit external repository and has not
+  been independently run through MINDER's acceptance tests. See
+  [the compatibility audit](../../MINDER_WAKE_WORD_WINDOWS_COMPATIBILITY.md).
+
+For now, treat the three upstream `train.py` commands below as the reference
+Linux/Colab workflow only. **Do not run them natively on the target Windows 11
+PC.** No training assets are downloaded and no training is started by this
+project until a Windows-compatible pipeline is reviewed and validated.
+
 ## Status
 
 - Runtime integration is implemented in `core/wake_word.py`.
@@ -93,8 +125,11 @@ A failed preflight means do not start training until the reported missing
 inputs are fixed. Its default 20 GiB free-space threshold is a warning, not a
 claim that 20 GiB is sufficient for every training setup.
 
-## Training stages
+## Reference training stages (Linux / compatible hosted environment only)
 
+These are the upstream reference commands, **not a supported native Windows
+11 workflow**. Use them only after selecting and validating a compatible Linux
+or hosted environment, with all datasets and dependencies already prepared.
 Run from the openWakeWord checkout with the MINDER config available at
 `hey_minder.yml` (adjust its relative paths only if your working directory
 differs):
