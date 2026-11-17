@@ -113,12 +113,13 @@ models, the training-time Python imports, required feature files, positive
 batch sizes, background-path counts, writable output parent, flat
 RIR/background folders containing only top-level files (the upstream trainer
 scans these non-recursively and does not filter subdirectories), and free disk
-space. It does not download, create, record, or train anything:
+space. Pass `--verify-imports` to actually import every required module (catching binary/DLL load failures) and verify that the installed PyTorch and TorchAudio versions/builds match exactly. The default mode only checks module discoverability. It does not download, create, record, or train anything:
 
 ```powershell
 python tools/wake_word_training/preflight.py `
   --training-root "PATH\\TO\\openWakeWord" `
-  --config "PATH\\TO\\openWakeWord\\hey_minder.yml"
+  --config "PATH\\TO\\openWakeWord\\hey_minder.yml" `
+  --verify-imports
 ```
 
 A failed preflight means do not start training until the reported missing
