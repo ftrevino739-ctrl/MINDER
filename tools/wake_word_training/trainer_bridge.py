@@ -286,6 +286,8 @@ def validate_feature_shapes(
             raise TrainingBridgeError(
                 f"{name} must contain non-empty {expected_feature_dimensions}-dimension features."
             )
+        if str(getattr(array, "dtype", "")) != "float32":
+            raise TrainingBridgeError(f"{name} must use float32 features, not {getattr(array, 'dtype', 'unknown')}.")
 
     input_shape = tuple(positive_test.shape[1:])
     if tuple(negative_test.shape[1:]) != input_shape:
@@ -300,17 +302,22 @@ def validate_feature_shapes(
         raise TrainingBridgeError(
             f"false-positive validation features must be 2-D with {expected_feature_dimensions} columns."
         )
+    if str(getattr(false_positive, "dtype", "")) != "float32":
+        raise TrainingBridgeError("false-positive validation features must use float32.")
     if false_positive.shape[0] <= input_shape[0]:
         raise TrainingBridgeError("False-positive validation stream is too short for one model window.")
 
     for label, feature_array in arrays.items():
         if label.startswith("external_negative:"):
             shape = getattr(feature_array, "shape", None)
-            if shape is None or len(shape) != 3 or shape[0] <= 0 or shape[2] != expected_feature_dimensions:
+            if (shape is None or len(shape) != 3 or shape[0] <= 0
+                    or shape[1] <= 0 or shape[2] != expected_feature_dimensions):
                 raise TrainingBridgeError(
                     f"{label} must be a non-empty 3-D feature array with "
                     f"{expected_feature_dimensions} columns."
                 )
+            if str(getattr(feature_array, "dtype", "")) != "float32":
+                raise TrainingBridgeError(f"{label} must use float32 features.")
 
     return int(input_shape[0]), int(input_shape[1])
 
