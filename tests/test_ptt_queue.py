@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from core.ptt_queue import (
+    MicrophoneQueue,
     enqueue_microphone_frame,
     relay_outbound_audio,
     schedule_flush_barrier,
@@ -31,7 +32,7 @@ class FakeSession:
 
 class PTTQueueTests(unittest.IsolatedAsyncioTestCase):
     async def test_ptt_enabled_rejects_frames_until_chord_is_held(self):
-        queue = asyncio.Queue()
+        queue = MicrophoneQueue()
         accepted = enqueue_microphone_frame(
             asyncio.get_running_loop(),
             queue,
@@ -46,7 +47,7 @@ class PTTQueueTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_release_barrier_stays_between_consecutive_ptt_turns(self):
         loop = asyncio.get_running_loop()
-        queue = asyncio.Queue(maxsize=4)
+        queue = MicrophoneQueue(maxsize=4)
         lock = threading.Lock()
         events = []
         done = asyncio.Event()
@@ -84,7 +85,7 @@ class PTTQueueTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_flush_barrier_is_not_lost_when_queue_is_full(self):
         loop = asyncio.get_running_loop()
-        queue = asyncio.Queue(maxsize=1)
+        queue = MicrophoneQueue(maxsize=1)
         lock = threading.Lock()
         events = []
         engine = FakeEngine(events)
@@ -100,6 +101,35 @@ class PTTQueueTests(unittest.IsolatedAsyncioTestCase):
 
         marker = await asyncio.wait_for(queue.get(), timeout=1.0)
         self.assertIs(marker.get("_flush_pipeline_turn"), engine)
+
+    async def test_full_queue_barrier_cannot_be_overtaken_by_next_turn_audio(self):
+        loop = asyncio.get_running_loop()
+        queue = MicrophoneQueue(maxsize=1)
+        lock = threading.Lock()
+        engine = FakeEngine([])
+        dropped = []
+        queue.put_nowait({"data": b"previous-turn", "mime_type": "audio/pcm"})
+
+        with lock:
+            schedule_flush_barrier(loop, queue, engine)
+
+        # Simulate the sender freeing a slot after the barrier's callback has
+        # discovered a full queue, while the next PTT press schedules a frame.
+        consumed = []
+        loop.call_soon(lambda: consumed.append(queue.get_nowait()))
+        enqueue_microphone_frame(
+            loop, queue, lock,
+            ptt_state=lambda: (True, True),
+            data=b"next-turn",
+            on_overflow=lambda: dropped.append(True),
+        )
+        await asyncio.sleep(0)
+
+        self.assertEqual(consumed[0]["data"], b"previous-turn")
+        self.assertEqual(dropped, [True])
+        marker = queue.get_nowait()
+        self.assertIs(marker.get("_flush_pipeline_turn"), engine)
+        self.assertTrue(queue.empty())
 
     async def test_queue_overflow_reports_dropped_microphone_frames(self):
         loop = asyncio.get_running_loop()
