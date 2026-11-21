@@ -379,6 +379,7 @@ def generate_piper_corpus(
     rng.shuffle(voice_cycle)
     entries: list[dict[str, Any]] = []
     completed_paths: list[Path] = []
+    temporary_manifest: Path | None = None
 
     try:
         for index, name in enumerate(names):
@@ -491,8 +492,14 @@ def generate_piper_corpus(
         except OSError as exc:
             raise PiperCorpusError(f"Could not publish corpus manifest without overwriting: {exc}") from exc
         temporary_manifest.unlink(missing_ok=True)
+        temporary_manifest = None
         return corpus_manifest
     except Exception:
+        if temporary_manifest is not None:
+            try:
+                temporary_manifest.unlink(missing_ok=True)
+            except OSError:
+                pass
         # Leave user-owned/pre-existing files untouched; remove only files that
         # this invocation created and only when this invocation did not finish.
         for path in completed_paths:
