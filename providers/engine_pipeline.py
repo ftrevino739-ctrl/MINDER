@@ -357,7 +357,6 @@ class PipelineEngine:
             self._tick("tools", time.monotonic() - started)
             self._timing["tool_names"] = ", ".join(
                 sorted(set(self._awaiting.values()))) or ""
-        completed_ids: list[str] = []
         interrupted_flags: list[bool] = []
         for fr in function_responses or []:
             call_id = str(getattr(fr, "id", "") or "")
@@ -368,7 +367,6 @@ class PipelineEngine:
             was_interrupted = bool(call_id and call_id in self._interrupted_tool_ids)
             if was_interrupted:
                 self._interrupted_tool_ids.discard(call_id)
-            completed_ids.append(call_id)
             interrupted_flags.append(was_interrupted)
             sig = getattr(self, "_pending_sigs", {}).pop(call_id, "")
             if sig and not was_interrupted:
