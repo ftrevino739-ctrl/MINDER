@@ -501,7 +501,10 @@ def generate_piper_corpus(
             os.link(temporary_manifest, corpus_manifest)
         except OSError as exc:
             raise PiperCorpusError(f"Could not publish corpus manifest without overwriting: {exc}") from exc
-        temporary_manifest.unlink(missing_ok=True)
+        try:
+            temporary_manifest.unlink(missing_ok=True)
+        except OSError:
+            pass
         temporary_manifest = None
         return corpus_manifest
     except Exception:
