@@ -225,10 +225,9 @@ false_positive_batches = TorchWindowBatches(
 
 This helper has unit coverage for upstream-equivalent window count/order,
 partial batches, invalid input, repeated passes and the tensor-adapter
-contract using lightweight test doubles. It is not yet wired into an approved
-full training command; the community trainer remains unapproved until its
-data downloader, config mapping, voice coverage and end-to-end training
-behavior are independently validated.
+contract using lightweight test doubles. It is now used by MINDER’s own
+model-training bridge; the external community trainer and its downloader
+remain unapproved and are not invoked.
 
 
 ## Dataset provenance and human approval gate
@@ -276,3 +275,64 @@ model approved just to make this check pass. The external candidate downloader
 is still not approved, and the manifest tool is not yet wired into a complete
 Windows trainer. No source datasets, clips or voice files have been downloaded
 for MINDER.
+
+## MINDER-owned Windows model-training bridge
+
+`trainer_bridge.py` now connects the project’s actual `hey_minder.yml` and approved feature assets to the pinned openWakeWord model class. It deliberately implements only the model-fitting/export stage: it does not synthesize clips, augment recordings, fetch datasets, record microphone audio or change MINDER’s application runtime.
+
+The bridge:
+
+- Requires the exact audited openWakeWord source checkout commit `368c03716d1e92591906a84949bc477f3a834455`.
+- Requires `model_name: hey_minder` and exactly the product phrase `hey minder`; it rejects accidental training of a different wake phrase.
+- Requires an approved asset manifest with SHA-256 verification for every input array.
+- Opens large NumPy feature arrays as read-only memory maps instead of loading the full ACAV100M set into RAM.
+- Uses a re-iterable training dataset with `num_workers=0`, so Windows does not need to spawn/pickle a local dataset class or prefetch 16 worker batches.
+- Feeds false-positive validation data through the MINDER bounded-window iterator (1,024 windows per batch by default, configurable up to 4,096).
+- Runs a final smoke test through the same openWakeWord ONNX runtime used by MINDER and verifies that the model exposes the `hey_minder` output key.
+
+### Expected prepared feature layout
+
+With the current `output_dir: ./artifacts/hey_minder`, the train bridge expects these feature arrays under the selected openWakeWord training root:
+
+```text
+assets/
+  validation_set_features.npy
+  openwakeword_features_ACAV100M_2000_hrs_16bit.npy
+artifacts/
+  hey_minder/
+    hey_minder/
+      positive_features_train.npy
+      negative_features_train.npy
+      positive_features_test.npy
+      negative_features_test.npy
+asset_manifest.json
+```
+
+The manifest must contain an individually reviewed record for each of these six arrays, including the four generated feature arrays. Generated arrays must list their source records under `derived_from`. The bridge rejects missing, pending, out-of-root or hash-mismatched assets before it imports PyTorch.
+
+### Read-only bridge check
+
+Run the following from the MINDER repository root. Replace the paths with your actual checkouts. This checks the Git pin, MINDER phrase/config contract, asset hashes, manifest coverage and required feature files. It does not import PyTorch, change files or start training:
+
+```powershell
+python tools/wake_word_training/trainer_bridge.py `
+  --training-root "PATH\\TO\\openWakeWord" `
+  --config "$PWD\\tools\\wake_word_training\\hey_minder.yml" `
+  --asset-manifest "PATH\\TO\\openWakeWord\\asset_manifest.json"
+```
+
+### Explicit model-training command
+
+Only after the source-specific license reviews are complete, every required feature file exists, and the read-only command passes, the actual CPU/RAM-intensive operation can be explicitly authorized:
+
+```powershell
+python tools/wake_word_training/trainer_bridge.py `
+  --training-root "PATH\\TO\\openWakeWord" `
+  --config "$PWD\\tools\\wake_word_training\\hey_minder.yml" `
+  --asset-manifest "PATH\\TO\\openWakeWord\\asset_manifest.json" `
+  --execute --confirm-heavy-training
+```
+
+The two confirmation flags are both required. The current assistant has not run this command, installed a training stack or downloaded the datasets. The bridge is code-reviewed and CI-tested, but the actual model-training stage and exported-model smoke test have not yet been exercised with real model assets on the target Windows 11 PC.
+
+Important: this is not yet a complete data-preparation pipeline. The feature-generation stage still needs an approved voice pool (including genuine Mexican-Spanish pronunciation coverage), a safe augmentation workflow and source-specific licensing/provenance records. Do not infer that a passing bridge dry run means those earlier stages have been completed.
