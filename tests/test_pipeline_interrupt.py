@@ -1,6 +1,7 @@
 """Thread-safe local-pipeline interruption regression tests."""
 import asyncio
 import unittest
+from types import SimpleNamespace
 
 from providers.base import Msg
 from providers.engine_pipeline import PipelineEngine
@@ -90,6 +91,40 @@ class PipelineInterruptTests(unittest.IsolatedAsyncioTestCase):
 
         await engine.close()
         await asyncio.wait_for(receiver, timeout=2.0)
+
+    async def test_late_tool_result_does_not_restart_interrupted_generation(self):
+        engine = PipelineEngine(BlockingLLM())
+        engine._bind_loop()
+        engine._awaiting["call-1"] = "open_app"
+        engine._awaiting["call-2"] = "search_web"
+        engine._pending_sigs["call-1"] = "open_app:{}"
+        engine._pending_sigs["call-2"] = "search_web:{}"
+
+        engine._interrupt_on_loop()
+        self.assertEqual(engine._interrupted_tool_ids, {"call-1", "call-2"})
+
+        await engine.send_tool_response(function_responses=[
+            SimpleNamespace(id="call-1", name="open_app", response={"result": "opened"}),
+            SimpleNamespace(id="call-2", name="search_web", response={"result": "found"}),
+        ])
+
+        self.assertFalse(engine._awaiting)
+        self.assertFalse(engine._interrupted_tool_ids)
+        self.assertIsNone(engine._gen)
+        await engine.close()
+
+    async def test_normal_tool_result_still_starts_followup_generation(self):
+        engine = PipelineEngine(BlockingLLM())
+        engine._bind_loop()
+        engine._awaiting["call-1"] = "search_web"
+
+        await engine.send_tool_response(function_responses=[
+            SimpleNamespace(id="call-1", name="search_web", response={"result": "found"}),
+        ])
+
+        self.assertFalse(engine._awaiting)
+        self.assertIsNotNone(engine._gen)
+        await engine.close()
 
     async def test_interrupt_without_an_open_loop_is_a_safe_noop(self):
         engine = PipelineEngine(BlockingLLM())
