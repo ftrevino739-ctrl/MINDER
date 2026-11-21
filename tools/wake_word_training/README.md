@@ -250,11 +250,12 @@ MINDER now includes a small stdlib-only manifest validator:
 
 - `asset_manifest.example.json` is a template. It deliberately has
   `review_status: pending` and cannot pass until a human fills in real
-  provenance and approval details.
+  provenance and approval details. Add `derived_from: []` for an original
+  source or list the IDs of the input assets used to produce a derived file.
 - `asset_manifest.py` requires a canonical HTTPS source, immutable source
   revision, exact license identifier, attribution, restrictions, review
-  identity/date, explicit approval for `model_training`, a safe relative
-  path and a SHA-256 that matches the local file.
+  identity/date, explicit approval for `model_training`, source-to-derived
+  lineage, a safe relative path and a SHA-256 that matches the local file.
 - It rejects unapproved assets, path traversal, duplicated IDs and hash
   mismatches. Hashing is streamed in 1 MiB chunks.
 - It does not interpret legal terms or decide whether a license permits a
