@@ -2556,7 +2556,8 @@ class JarvisLive:
 
                     self.session          = session
                     self.audio_in_queue   = asyncio.Queue()
-                    self.out_queue        = asyncio.Queue(maxsize=200)
+                    from core.ptt_queue import MicrophoneQueue
+                    self.out_queue        = MicrophoneQueue(maxsize=200)
                     self._turn_done_event = asyncio.Event()
                     self._rx_deadline     = None
 
