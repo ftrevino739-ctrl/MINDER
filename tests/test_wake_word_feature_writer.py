@@ -96,7 +96,7 @@ class FeatureWriterTests(unittest.TestCase):
                 numpy_module=numpy,
             )
 
-            self.assertEqual(result, output)
+            self.assertEqual(result, output.resolve())
             self.assertTrue(output.is_file())
             self.assertEqual(audio.duration_seconds, 2.0)
             self.assertEqual(audio.calls, [((2, 32000), 2), ((1, 32000), 1)])
