@@ -22,6 +22,7 @@ This checklist validates the real microphone → STT → selected LLM → TTS �
    - the selected LLM returns a relevant answer;
    - the selected TTS voice is audible through the selected output device.
 3. Repeat once with a different short Spanish sentence to rule out a lucky transcription.
+   - One PTT buffer has a two-minute safety cap. If MINDER logs that the limit was reached, release PTT to transcribe the captured portion; later frames are intentionally not buffered.
 4. While MINDER is speaking, press the interrupt control or the Escape key. Verify playback stops promptly and a later turn can still complete.
    - In Pipeline mode, this is an explicit user-triggered interrupt: it cancels the in-flight LLM/TTS task on the provider's asyncio loop and emits a turn-complete event so the receive loop resumes listening. It is not automatic barge-in; speaking over the assistant without pressing the control is not yet a supported interruption trigger.
    - A tool or desktop action already dispatched before interruption is not forcibly cancelled; verify its confirmation/safety gate still governs any external side effect. Its late result is recorded, but does not automatically restart the interrupted spoken answer or replace a newer user request. In a multi-action batch, calls not yet admitted for dispatch when interruption arrives are returned as not executed and must not launch apps, files or shutdown actions.
