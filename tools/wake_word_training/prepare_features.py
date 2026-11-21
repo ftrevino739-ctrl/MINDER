@@ -279,6 +279,12 @@ def validate_feature_preparation_workspace(
             raise FeaturePreparationError(
                 f"Missing corpus manifest or corpus asset ID for split {split!r}."
             )
+    selected_asset_ids = [corpus_asset_ids[split] for split, _, _ in _SPLITS]
+    selected_manifests = [Path(corpus_manifests[split]).expanduser().resolve() for split, _, _ in _SPLITS]
+    if len(set(selected_asset_ids)) != len(selected_asset_ids):
+        raise FeaturePreparationError("Each of the four feature splits must use a distinct approved corpus asset ID.")
+    if len(set(selected_manifests)) != len(selected_manifests):
+        raise FeaturePreparationError("Each of the four feature splits must use a distinct corpus manifest file.")
 
     try:
         from tools.wake_word_training.asset_manifest import validate_manifest
