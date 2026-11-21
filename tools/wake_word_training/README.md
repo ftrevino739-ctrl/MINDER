@@ -387,3 +387,48 @@ MINDER must first finish an approved multi-voice generator and source manifest
 (including Mexican-Spanish coverage, RIR and background rights). The bridge
 therefore still requires precomputed feature files and will not create or
 download them automatically.
+
+## Local multilingual Piper corpus generation
+
+MINDER now has a first-party voice-pool generator in `piper_clip_generator.py`. It synthesizes text locally; it does not access a microphone, upload audio, install Piper, or download voice models. It requires an isolated build environment with NumPy, Piper TTS and SciPy (SciPy is needed only when a voice sample rate is not 16 kHz).
+
+The draft `voice_pool.example.json` shows the required layout. Make a separate `voice_pool.json` and replace every placeholder ID with real `asset_id` values from the approved `asset_manifest.json`:
+
+- Each model file must be an ONNX Piper voice recorded as `asset_type: voice_model`.
+- Its sidecar JSON must be recorded separately as `asset_type: voice_config`.
+- Both records need their own SHA-256, exact license, attribution, restrictions and explicit `model_training` approval.
+- The pool must contain at least one English voice and one Mexican-Spanish (`es-MX`) voice. Voice selection is weighted and balanced across cycles; a multi-speaker voice selects a speaker ID per clip.
+- No candidate voice is bundled or automatically selected. A voice must be obtained and reviewed by the maintainer first.
+
+Example PowerShell command for a positive training split (create the output directory first):
+
+```powershell
+$ROOT = "D:\\MINDER-training"
+$OUT = Join-Path $ROOT "corpus\\positive_train"
+New-Item -ItemType Directory -Force -Path $OUT | Out-Null
+python tools/wake_word_training/piper_clip_generator.py `
+  --voice-pool "PATH\\TO\\voice_pool.json" `
+  --asset-manifest (Join-Path $ROOT "asset_manifest.json") `
+  --asset-root $ROOT `
+  --output-dir $OUT `
+  --corpus-manifest (Join-Path $OUT "corpus_manifest.json") `
+  --text "hey minder" `
+  --samples 20000 `
+  --seed 101
+```
+
+For the negative split, pass the hand-reviewed negative phrases from `hey_minder.yml` as repeated `--text` arguments and use a different empty output directory and seed. Use separate positive and negative directories for training and synthetic validation. The generator refuses existing filenames and manifests; choose a new folder rather than overwriting an earlier corpus.
+
+After generation, verify every WAV and its lineage before using it:
+
+```powershell
+python tools/wake_word_training/validate_piper_corpus.py `
+  --corpus-manifest (Join-Path $OUT "corpus_manifest.json") `
+  --corpus-root $OUT `
+  --asset-manifest (Join-Path $ROOT "asset_manifest.json") `
+  --asset-root $ROOT
+```
+
+The sidecar records SHA-256 for each WAV, source voice asset IDs, locale, speaker ID, text and synthesis parameters. The corpus manifest itself is a derived artifact: review it, add a `generated_audio_corpus_manifest` record with `derived_from` listing the voice model/config IDs, then explicitly approve its use before it can be used as a source for feature generation. The generator never marks generated output as approved.
+
+These generated WAVs are synthetic coverage only. A high-quality `es-MX` TTS voice may still be a single speaker and does not prove that MINDER recognizes real people using natural Mexican-Spanish pronunciation. The final wake-word acceptance gate still requires multiple held-out human speakers and separate real-room false-wake measurements. Do not record or upload personal audio as part of this tool.
