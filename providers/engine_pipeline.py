@@ -123,9 +123,9 @@ class PipelineEngine:
             "max_tool_chars": llm_caps.get("max_tool_chars"),
             "vision": bool(llm_caps.get("vision")),
             "audio_out": tts is not None,
-            # A local pipeline has no server deciding when the user has started
-            # talking over it. Until an engine can do that, `interrupt()` stops
-            # playback and this stays false rather than claiming otherwise.
+            # Manual UI/keyboard interruption cancels local generation and
+            # playback, but incoming microphone speech is not detected
+            # automatically while speaking. Do not claim automatic barge-in.
             "barge_in": False,
             "non_blocking": False,
             "resumption": False,
