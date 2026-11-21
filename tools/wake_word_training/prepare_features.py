@@ -381,6 +381,13 @@ def current_minder_source_revision() -> str:
     return result.stdout.strip().lower()
 
 
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 def _make_pending_feature_proposals(
     bundle: FeaturePreparationBundle,
     source_revision: str,
@@ -399,7 +406,7 @@ def _make_pending_feature_proposals(
             "source_url": source_url,
             "source_revision": source_revision,
             "relative_path": relative,
-            "sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
+            "sha256": _hash_file(output_path),
             "license_id": "REVIEW_REQUIRED",
             "attribution": "Review all source corpus, room impulse response and background audio attributions before approval.",
             "restrictions": ["PENDING source-license and trained-feature review; do not distribute or train until approved."],
