@@ -33,6 +33,7 @@ def _asset(file_path: Path, **overrides):
         "reviewed_by": "maintainer",
         "reviewed_at": "2026-11-21",
         "approved_uses": ["model_training"],
+        "derived_from": [],
     }
     record.update(overrides)
     return record
@@ -121,6 +122,25 @@ class AssetManifestTests(unittest.TestCase):
             MODULE.validate_manifest(manifest, root)
         self.assertIn("license_id", str(caught.exception))
         self.assertIn("attribution", str(caught.exception))
+
+    def test_rejects_unknown_provenance_parent(self):
+        root, manifest, payload = self._workspace()
+        payload["assets"][0]["derived_from"] = ["missing-source"]
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(MODULE.ManifestError, "unknown derived_from"):
+            MODULE.validate_manifest(manifest, root)
+
+    def test_rejects_provenance_cycles(self):
+        root, manifest, payload = self._workspace()
+        child = dict(payload["assets"][0])
+        child["asset_id"] = "derived-background"
+        child["relative_path"] = "validation.npy"
+        child["derived_from"] = ["validation-features-v1"]
+        payload["assets"][0]["derived_from"] = ["derived-background"]
+        payload["assets"].append(child)
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(MODULE.ManifestError, "Provenance cycle"):
+            MODULE.validate_manifest(manifest, root)
 
     def test_rejects_duplicate_asset_ids(self):
         root, manifest, payload = self._workspace()
