@@ -84,6 +84,20 @@ class AssetManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ManifestError, "HTTPS URL"):
             MODULE.validate_manifest(manifest, root)
 
+    def test_rejects_windows_separator_in_portable_path(self):
+        root, manifest, payload = self._workspace()
+        payload["assets"][0]["relative_path"] = r"nested\\..\\outside.wav"
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(MODULE.ManifestError, "relative POSIX path"):
+            MODULE.validate_manifest(manifest, root)
+
+    def test_rejects_windows_drive_path_on_non_windows_host(self):
+        root, manifest, payload = self._workspace()
+        payload["assets"][0]["relative_path"] = "C:/temp/validation.npy"
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(MODULE.ManifestError, "relative POSIX path"):
+            MODULE.validate_manifest(manifest, root)
+
     def test_rejects_path_traversal(self):
         root, manifest, payload = self._workspace()
         payload["assets"][0]["relative_path"] = "../outside.wav"
