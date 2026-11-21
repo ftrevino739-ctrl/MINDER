@@ -591,6 +591,8 @@ class JarvisLive:
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        # Serialises the per-tool dispatch decision against UI-thread interrupts.
+        self._tool_dispatch_lock   = threading.Lock()
         # Which engine is holding the conversation, and what it can do.
         # None means Gemini Live — the default and, unless somebody has gone to
         # the providers settings and chosen otherwise, always the case. Every
@@ -1134,7 +1136,8 @@ class JarvisLive:
 
     def interrupt(self) -> None:
         """Stop MINDER mid-speech: drain queued audio and open mic immediately."""
-        self._interrupted = True
+        with self._tool_dispatch_lock:
+            self._interrupted = True
         q = self.audio_in_queue
         if q:
             drained = 0
@@ -1161,6 +1164,11 @@ class JarvisLive:
             except Exception:
                 pass
         self.ui.write_log("SYS: Interrupted — listening...")
+
+    def _tool_dispatch_interrupted(self) -> bool:
+        """Read the interrupt gate under the same lock used by interrupt()."""
+        with self._tool_dispatch_lock:
+            return self._interrupted
 
     def speak(self, text: str):
         if not self._loop or not self.session:
@@ -1801,7 +1809,8 @@ class JarvisLive:
                             # If this turn_complete ends an interrupted response, clear the
                             # flag and skip all further processing for that turn.
                             if self._interrupted:
-                                self._interrupted = False
+                                with self._tool_dispatch_lock:
+                                    self._interrupted = False
                                 in_buf  = []
                                 out_buf = []
                                 self._visemes.reset()
@@ -1855,7 +1864,7 @@ class JarvisLive:
                         fn_responses = await dispatch_function_calls(
                             response.tool_call.function_calls,
                             self._execute_tool,
-                            is_interrupted=lambda: self._interrupted,
+                            is_interrupted=self._tool_dispatch_interrupted,
                             response_factory=types.FunctionResponse,
                         )
                         # PipelineEngine marshals its interrupt onto this loop.
