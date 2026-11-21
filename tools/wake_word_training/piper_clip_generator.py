@@ -136,8 +136,8 @@ def load_approved_voice_records(
 
         if not isinstance(language, str) or not re.fullmatch(r"[a-z]{2,3}[-_][A-Za-z0-9-]{2,16}", language):
             raise PiperCorpusError(f"{label}.language must be a locale such as en-US or es-MX.")
-        if not isinstance(weight, int) or isinstance(weight, bool) or weight <= 0:
-            raise PiperCorpusError(f"{label}.weight must be a positive integer.")
+        if not isinstance(weight, int) or isinstance(weight, bool) or not 1 <= weight <= 100:
+            raise PiperCorpusError(f"{label}.weight must be an integer between 1 and 100.")
         if not isinstance(model_id, str) or not isinstance(config_id, str):
             raise PiperCorpusError(f"{label} must reference model_asset_id and config_asset_id.")
 
@@ -171,6 +171,9 @@ def load_approved_voice_records(
             config_path=config_path,
             weight=weight,
         ))
+
+    if sum(record.weight for record in voices) > 256:
+        raise PiperCorpusError("The total voice-pool weight must not exceed 256.")
 
     languages = {record.language.casefold() for record in voices}
     has_english = any(language.startswith("en-") for language in languages)
@@ -286,7 +289,7 @@ def generate_piper_corpus(
     resample_fn: Callable[[Any, int, int], Any] | None = None,
     numpy_module: Any | None = None,
 ) -> Path:
-    """Synthesize a fully recorded voice-diverse 16 kHz mono PCM16 WAV corpus.
+    """Synthesize a fully generated voice-diverse 16 kHz mono PCM16 WAV corpus.
 
     The voice pool's model and config asset IDs must both be human-approved
     for model_training and SHA-256 verified in the provided asset manifest.
@@ -425,10 +428,17 @@ def generate_piper_corpus(
             if source_rate <= 0:
                 raise PiperCorpusError("Piper reported an invalid audio sample rate.")
 
-            audio = np.concatenate([
-                np.asarray(chunk.audio_float_array, dtype=np.float32).reshape(-1)
-                for chunk in chunks
-            ])
+            audio_parts = []
+            for chunk in chunks:
+                if int(getattr(chunk, "sample_channels", 1) or 1) != 1:
+                    raise PiperCorpusError("Piper voice chunks must be mono.")
+                part = np.asarray(chunk.audio_float_array, dtype=np.float32)
+                if part.ndim != 1 or part.size == 0:
+                    raise PiperCorpusError("Piper voice chunks must contain non-empty 1-D mono audio.")
+                audio_parts.append(part)
+            audio = np.concatenate(audio_parts)
+            if not np.all(np.isfinite(audio)):
+                raise PiperCorpusError("Piper synthesis returned NaN or infinite audio samples.")
             peak = float(np.max(np.abs(audio))) if audio.size else 0.0
             if peak <= 0.0:
                 raise PiperCorpusError(
