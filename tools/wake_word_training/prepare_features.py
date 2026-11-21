@@ -399,8 +399,7 @@ def _make_pending_feature_proposals(
             "proposal_schema_version": 1,
             "note": "PENDING human review. These are not approved asset records.",
             "assets": records,
-        }, ensure_ascii=False, indent=2) + "
-",
+        }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     return proposal_path
