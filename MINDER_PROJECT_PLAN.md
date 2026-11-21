@@ -4,7 +4,7 @@
 
 MINDER is a personal desktop assistant for Windows first, with cross-platform support retained where practical. It should feel like a polished, responsive desktop product—not a demo.
 
-In plain terms, this is the user's Jarvis-style computer assistant—not an OS or a browser. It combines voice and text conversation, a user-selected reasoning provider, speech recognition and synthesis, safe desktop/browser/file/coding tools, persistent inspectable memory, and a Liquid Glass-inspired HUD. Product-facing identity is MINDER; legacy Jarvis class names are internal compatibility details.
+In plain terms, this is the user's Jarvis-style computer assistant—not an OS or a browser. It combines voice and text conversation, a user-selected reasoning provider, speech recognition and synthesis, safe desktop/browser/file/coding tools, persistent inspectable memory, and a Liquid Glass-inspired HUD. Product-facing identity is MINDER; legacy Jarvis class names are internal compatibility details. The wake-word work is only an optional local hands-free entry path into this assistant; it must never replace the conversation engine, automate microphone startup, or turn MINDER into a single-purpose wake-word project. Push-to-Talk and text input remain first-class paths.
 
 The starting codebase is Mark LVI by FatihMakes. This repository is an independent rebrand/adaptation, not a fork. The upstream attribution and CC BY-NC 4.0 terms remain in place. Read LICENSE before redistributing or using the project commercially.
 
