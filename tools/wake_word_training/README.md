@@ -432,3 +432,46 @@ python tools/wake_word_training/validate_piper_corpus.py `
 The sidecar records SHA-256 for each WAV, source voice asset IDs, locale, speaker ID, text and synthesis parameters. The corpus manifest itself is a derived artifact: review it, add a `generated_audio_corpus_manifest` record with `derived_from` listing the voice model/config IDs, then explicitly approve its use before it can be used as a source for feature generation. The generator never marks generated output as approved.
 
 These generated WAVs are synthetic coverage only. A high-quality `es-MX` TTS voice may still be a single speaker and does not prove that MINDER recognizes real people using natural Mexican-Spanish pronunciation. The final wake-word acceptance gate still requires multiple held-out human speakers and separate real-room false-wake measurements. Do not record or upload personal audio as part of this tool.
+## Manifest-gated augmentation and feature preparation
+
+`prepare_features.py` is now the MINDER-owned fourth stage after (1) asset review, (2) local Piper WAV corpus generation, and (3) corpus validation. It uses the pinned openWakeWord `augment_clips()` and `AudioFeatures` implementations but performs the file writing through MINDER's Windows-safe atomic `feature_writer.py`.
+
+The stage requires four distinct corpus manifests and four distinct asset IDs: `positive_train`, `positive_test`, `negative_train`, and `negative_test`. It checks the declared counts against `hey_minder.yml`, requires the positive corpus phrase to be exactly `hey minder`, and requires each negative entry's text to appear in `custom_negative_phrases`. Each registered corpus manifest must already be approved in the parent `asset_manifest.json` as `generated_audio_corpus_manifest` and must list its approved voice model/config asset IDs in `derived_from`.
+
+RIR and background folders must be flat, non-empty directories. Every top-level file must have its own SHA-256-verified, human-approved parent-manifest entry with `asset_type: room_impulse_response` or `asset_type: background_audio`, respectively. The official openWakeWord trainer scans these folders non-recursively, so nested folders are rejected.
+
+### Read-only feature-preparation preflight
+
+Run from the MINDER repository root after the four corpus manifests, approved voice models/configs, RIRs and backgrounds have been prepared. The four corpus manifests and their IDs must all be unique and recorded in `asset_manifest.json` before this command can pass:
+
+```powershell
+python tools/wake_word_training/prepare_features.py `
+  --training-root "PATH\\TO\\openWakeWord" `
+  --asset-root "PATH\\TO\\training-assets" `
+  --config "$PWD\\tools\\wake_word_training\\hey_minder.yml" `
+  --asset-manifest "PATH\\TO\\training-assets\\asset_manifest.json" `
+  --positive-train-corpus-manifest "PATH\\TO\\positive_train\\corpus_manifest.json" `
+  --positive-train-corpus-asset-id "APPROVED_POSITIVE_TRAIN_CORPUS_ASSET_ID" `
+  --positive-test-corpus-manifest "PATH\\TO\\positive_test\\corpus_manifest.json" `
+  --positive-test-corpus-asset-id "APPROVED_POSITIVE_TEST_CORPUS_ASSET_ID" `
+  --negative-train-corpus-manifest "PATH\\TO\\negative_train\\corpus_manifest.json" `
+  --negative-train-corpus-asset-id "APPROVED_NEGATIVE_TRAIN_CORPUS_ASSET_ID" `
+  --negative-test-corpus-manifest "PATH\\TO\\negative_test\\corpus_manifest.json" `
+  --negative-test-corpus-asset-id "APPROVED_NEGATIVE_TEST_CORPUS_ASSET_ID"
+```
+
+This default mode is read-only: it verifies the exact openWakeWord Git commit, MINDER config, all corpus files and their hashes, the four source registrations, room impulse responses/background files and output paths. It does not import PyTorch, create directories, modify manifests, synthesize audio, download anything or start feature extraction.
+
+### Explicit feature extraction
+
+Only after all upstream source-specific license decisions have been made, the four corpora have been locally generated and manually registered/approved, and the read-only preflight succeeds, this same command can be repeated with both confirmation flags:
+
+```powershell
+  --execute --confirm-heavy-preparation
+```
+
+This performs CPU-first room/background augmentation and streaming feature embedding for four splits. It writes `positive_features_train.npy`, `positive_features_test.npy`, `negative_features_train.npy` and `negative_features_test.npy` directly to exact-size memory-mapped files, one batch at a time. It never builds a full feature matrix in RAM and never calls the upstream `trim_mmap` path that unlinks an open map on Windows.
+
+At successful completion it creates `feature_asset_proposals.pending.json`. This is deliberately NOT an approved asset manifest: all four records have `review_status: pending`, empty `approved_uses`, a `REVIEW_REQUIRED` license field, incremental SHA-256 hashes and `derived_from` links to the reviewed corpora, RIRs and background files. A maintainer must review source rights/attribution and the feature dataset's derivative-license implications, then merge/review these records into `asset_manifest.json`. `trainer_bridge.py` will reject the features until their asset records have been approved. Do not mark the proposals approved merely to bypass the gate.
+
+The feature stage is a CPU/disk-intensive operation and has not been executed against real voice/data assets. CI uses synthetic fixtures only. No datasets, Piper models or real audio corpora have been downloaded or generated by MINDER during this development phase.
