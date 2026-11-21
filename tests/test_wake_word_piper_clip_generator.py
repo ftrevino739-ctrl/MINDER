@@ -180,7 +180,7 @@ class PiperClipGeneratorTests(unittest.TestCase):
 
     def test_voice_pool_requires_mexican_spanish_and_english_coverage(self):
         root, pool, manifest, payload = self._workspace()
-        payload["voices"] = [voice for voice in payload["voices"] if voice["language"] == "en-US"]
+        payload["voices"][1]["language"] = "es-ES"
         pool.write_text(json.dumps(payload), encoding="utf-8")
         with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "Mexican-Spanish"):
             GENERATOR.load_approved_voice_records(pool, manifest, root)
