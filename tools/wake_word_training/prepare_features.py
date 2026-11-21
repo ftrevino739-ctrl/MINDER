@@ -435,8 +435,10 @@ def _make_pending_feature_proposals(
         os.link(temporary, proposal_path)
     except OSError as exc:
         raise FeaturePreparationError(f"Could not publish pending feature proposals safely: {exc}") from exc
-    finally:
+    try:
         temporary.unlink(missing_ok=True)
+    except OSError:
+        pass
     return proposal_path
 
 
