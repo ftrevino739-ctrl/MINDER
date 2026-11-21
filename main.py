@@ -63,6 +63,7 @@ from memory.memory_manager import (
 # (screen_process, close_camera, save_memory, manage_monitor, shutdown_jarvis,
 # system_status).
 from core import outcome
+from core.tool_dispatch import dispatch_function_calls
 from core.action_loader import strip_meta
 from actions.screen_processor  import _capture_camera, _capture_screen
 from actions.system_monitor    import SystemMonitor, get_system_status
@@ -1848,15 +1849,39 @@ class JarvisLive:
                                 asyncio.create_task(_cam_close())
 
                     if response.tool_call:
-                        fn_responses = []
-                        for fc in response.tool_call.function_calls:
-                            print(f"[MINDER] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
+                        # An interrupt can arrive while a multi-call batch is
+                        # being processed. Let the action already in progress
+                        # finish, but do not start any later desktop side effect.
+                        fn_responses = await dispatch_function_calls(
+                            response.tool_call.function_calls,
+                            self._execute_tool,
+                            is_interrupted=lambda: self._interrupted,
+                            response_factory=types.FunctionResponse,
+                        )
+                        # PipelineEngine marshals its interrupt onto this loop.
+                        # Yield once so it detaches the interrupted call IDs
+                        # before these late results are recorded.
+                        if self._interrupted:
+                            await asyncio.sleep(0)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
-                        await self._flush_pending_vision()
+
+                        if self._interrupted:
+                            # A captured frame belongs to the interrupted turn;
+                            # do not silently inject it as a fresh user request.
+                            if self._pending_vision is not None:
+                                self._pending_vision = None
+                                self._vision_busy = False
+                                self._vision_close_pending = False
+                                if self._vision_cam_active:
+                                    self._vision_cam_active = False
+                                    try:
+                                        self.ui.stop_camera_stream()
+                                    except Exception:
+                                        pass
+                        else:
+                            await self._flush_pending_vision()
         except Exception as e:
             print(f"[MINDER] ❌ Recv: {e}")
             traceback.print_exc()
