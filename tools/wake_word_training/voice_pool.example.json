@@ -1,0 +1,20 @@
+{
+  "voice_pool_version": 1,
+  "note": "DRAFT TEMPLATE ONLY. Replace every placeholder with asset_id values from the human-reviewed manifest; this file cannot run as-is.",
+  "voices": [
+    {
+      "voice_id": "english_multi_speaker",
+      "language": "en-US",
+      "model_asset_id": "REPLACE_WITH_APPROVED_ENGLISH_VOICE_MODEL_ASSET_ID",
+      "config_asset_id": "REPLACE_WITH_APPROVED_ENGLISH_VOICE_CONFIG_ASSET_ID",
+      "weight": 1
+    },
+    {
+      "voice_id": "mexican_spanish_voice",
+      "language": "es-MX",
+      "model_asset_id": "REPLACE_WITH_APPROVED_MEXICAN_SPANISH_VOICE_MODEL_ASSET_ID",
+      "config_asset_id": "REPLACE_WITH_APPROVED_MEXICAN_SPANISH_VOICE_CONFIG_ASSET_ID",
+      "weight": 1
+    }
+  ]
+}
