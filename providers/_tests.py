@@ -355,6 +355,71 @@ async def test_push_to_talk_waits_for_release_before_transcribing():
         await engine.close()
 
 
+async def test_microphone_turn_buffers_are_bounded():
+    """A stuck PTT key or continuous auto-VAD speech must not grow PCM forever."""
+    import numpy as np
+    import providers.engine_pipeline as pipeline
+    from providers.engine_pipeline import PipelineEngine
+
+    section("[1d] Microphone turn buffers have hard memory bounds")
+    speech = np.full(160, 3500, dtype=np.int16).tobytes()  # 10 ms at 16 kHz
+
+    # Keep the PTT cap tiny in this test; production is two minutes.
+    previous_ptt_limit = pipeline._PTT_MAX_TURN_S
+    pipeline._PTT_MAX_TURN_S = 0.02
+    ptt_logs = []
+    ptt_stt = FakeSTT()
+    ptt = PipelineEngine(
+        FakeLLM([]), stt=ptt_stt, tts=FakeTTS(), config=Cfg(),
+        log=ptt_logs.append,
+    )
+    ptt.auto_turn = False
+    try:
+        for _ in range(4):
+            await ptt.send_realtime_input(audio=speech)
+
+        check("PTT PCM buffer stops at its configured cap",
+              ptt._mic_bytes == len(speech) * 2 and len(ptt._mic) == 2,
+              f"bytes={ptt._mic_bytes}, chunks={len(ptt._mic)}")
+        check("PTT cap is reported only once per turn",
+              len(ptt_logs) == 1 and "0.02-second" in ptt_logs[0],
+              str(ptt_logs))
+
+        await ptt.flush_microphone(16000)
+        check("release transcribes captured PCM and resets the cap",
+              ptt_stt.got == len(speech) * 2
+              and ptt._mic_bytes == 0
+              and not ptt._mic_limit_reported,
+              f"stt_bytes={ptt_stt.got}, buffered={ptt._mic_bytes}")
+    finally:
+        await ptt.close()
+        pipeline._PTT_MAX_TURN_S = previous_ptt_limit
+
+    # Continuous speech used to return from _watch_for_turn_end before the
+    # maximum-duration branch, so it could bypass the advertised 30s limit.
+    previous_vad_limit = pipeline._VAD_MAX_TURN_S
+    previous_min_speech = pipeline._VAD_MIN_SPEECH_MS
+    pipeline._VAD_MAX_TURN_S = 0.05
+    pipeline._VAD_MIN_SPEECH_MS = 10.0
+    vad_stt = FakeSTT()
+    vad = PipelineEngine(
+        FakeLLM([]), stt=vad_stt, tts=FakeTTS(), config=Cfg(),
+        log=lambda _message: None,
+    )
+    vad.auto_turn = True
+    try:
+        for _ in range(5):
+            await vad.send_realtime_input(audio=speech)
+
+        check("continuous auto-VAD speech flushes at its maximum duration",
+              vad_stt.got == len(speech) * 5 and vad._mic_bytes == 0,
+              f"stt_bytes={vad_stt.got}, buffered={vad._mic_bytes}")
+    finally:
+        await vad.close()
+        pipeline._VAD_MAX_TURN_S = previous_vad_limit
+        pipeline._VAD_MIN_SPEECH_MS = previous_min_speech
+
+
 async def test_spanish_ptt_turn_preserves_transcript_and_speech():
     """Spanish PTT audio must survive STT -> LLM -> TTS without text loss."""
     import numpy as np
@@ -1598,6 +1663,7 @@ async def main() -> int:
     await test_real_caller_shapes()
     await test_auto_vad_drives_the_full_voice_pipeline()
     await test_push_to_talk_waits_for_release_before_transcribing()
+    await test_microphone_turn_buffers_are_bounded()
     await test_spanish_ptt_turn_preserves_transcript_and_speech()
     await test_taskgroup_and_tool_loop()
     await test_full_stack_over_http()
