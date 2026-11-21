@@ -17,10 +17,11 @@ async def dispatch_function_calls(
 ) -> list[ResponseT]:
     """Run a tool batch in order, never starting actions after an interrupt.
 
-    An action whose executor has already been entered is allowed to finish:
-    cancelling arbitrary desktop side effects would be unsafe and unreliable.
-    Every later call receives an explicit not-executed response so the caller
-    can still complete the provider's tool-response protocol.
+    Passing the interruption gate admits a call for execution. Once admitted,
+    it is allowed to finish: cancelling arbitrary desktop side effects would
+    be unsafe and unreliable. If interruption wins before a later call passes
+    the gate, that call receives an explicit not-executed response so the
+    provider's tool-response protocol can still be completed.
     """
     responses: list[ResponseT] = []
     for call in function_calls or ():
