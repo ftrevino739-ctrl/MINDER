@@ -453,7 +453,6 @@ class PipelineEngine:
 
     # ── generation ───────────────────────────────────────────────────────────
     def _queue_generation(self) -> None:
-        self._bind_loop()
         """Answer this, after whatever is already being answered.
 
         The first version cancelled the generation in flight. That is right for
@@ -466,15 +465,16 @@ class PipelineEngine:
         Nothing that arrives this way is urgent enough to destroy an answer the
         user is waiting for. It waits its turn.
         """
+        self._bind_loop()
         if self._gen and not self._gen.done():
             self._followup = True
             return
         self._gen = asyncio.create_task(self._generate())
 
     def _start_generation(self) -> None:
-        self._bind_loop()
         """Generate now, replacing anything running. Only used where the
         conversation genuinely moved on — a tool result completing the turn."""
+        self._bind_loop()
         if self._gen and not self._gen.done():
             self._gen.cancel()
         self._gen = asyncio.create_task(self._generate())
