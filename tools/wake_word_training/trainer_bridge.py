@@ -500,7 +500,10 @@ def build_training_bundle(
         num_workers=0,
     )
 
-    from tools.wake_word_training.streaming_windows import TorchWindowBatches
+    try:
+        from tools.wake_word_training.streaming_windows import TorchWindowBatches
+    except ImportError:
+        from streaming_windows import TorchWindowBatches
 
     false_positive_loader = TorchWindowBatches(
         arrays["false_positive_validation"],
