@@ -2566,7 +2566,8 @@ class JarvisLive:
                     self._vision_close_pending = False
                     self._vision_busy          = False
                     self._vision_last_time     = 0.0
-                    self._interrupted          = False
+                    with self._tool_dispatch_lock:
+                        self._interrupted = False
 
                     print("[MINDER] Connected.")
                     if _resumed_with:
