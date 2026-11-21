@@ -160,6 +160,24 @@ def _approved_manifest(root, relative_paths):
 
 
 class TrainerBridgeTests(unittest.TestCase):
+    def test_checkout_gate_requires_the_reviewed_upstream_commit(self):
+        class Result:
+            def __init__(self, output, returncode=0):
+                self.stdout = output
+                self.stderr = ""
+                self.returncode = returncode
+
+        with patch.object(BRIDGE.subprocess, "run",
+                          return_value=Result(BRIDGE.PINNED_OPENWAKEWORD_COMMIT + "\\n")):
+            self.assertEqual(
+                BRIDGE.verify_pinned_openwakeword_checkout(Path(".")),
+                BRIDGE.PINNED_OPENWAKEWORD_COMMIT,
+            )
+        with patch.object(BRIDGE.subprocess, "run",
+                          return_value=Result("deadbeef\\n")):
+            with self.assertRaisesRegex(BRIDGE.TrainingBridgeError, "only supports the reviewed"):
+                BRIDGE.verify_pinned_openwakeword_checkout(Path("."))
+
     def test_accepts_current_minder_training_profile(self):
         BRIDGE.validate_minder_config(_project_config())
 
@@ -401,6 +419,7 @@ class TrainerBridgeTests(unittest.TestCase):
                 manifest,
                 validation_batch_size=256,
                 dependencies=dependencies,
+                require_pinned_checkout=False,
             )
 
             self.assertEqual(bundle.model.kwargs["input_shape"], (16, 96))
