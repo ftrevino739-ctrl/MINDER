@@ -144,6 +144,10 @@ class PiperClipGeneratorTests(unittest.TestCase):
         root, pool, manifest, _ = self._workspace()
         corpus_path = self._generate(root, pool, manifest)
         payload = json.loads(corpus_path.read_text(encoding="utf-8"))
+        validated = GENERATOR.validate_piper_corpus_manifest(
+            corpus_path, root / "output", asset_manifest_path=manifest, asset_root=root
+        )
+        self.assertEqual(len(validated), 6)
 
         self.assertEqual(payload["corpus_schema_version"], 1)
         self.assertEqual(payload["sample_count"], 6)
@@ -177,6 +181,28 @@ class PiperClipGeneratorTests(unittest.TestCase):
                 self.assertEqual(wav.getframerate(), 16000)
                 self.assertEqual(wav.getsampwidth(), 2)
                 self.assertGreater(wav.getnframes(), 0)
+
+    def test_corpus_validator_rejects_tampered_wav_hash(self):
+        root, pool, manifest, _ = self._workspace()
+        corpus_path = self._generate(root, pool, manifest)
+        payload = json.loads(corpus_path.read_text(encoding="utf-8"))
+        sample_path = root / "output" / payload["entries"][0]["relative_path"]
+        sample_path.write_bytes(sample_path.read_bytes() + b"tampered")
+        with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "SHA-256 mismatch"):
+            GENERATOR.validate_piper_corpus_manifest(
+                corpus_path, root / "output", asset_manifest_path=manifest, asset_root=root
+            )
+
+    def test_corpus_validator_rejects_unapproved_source_asset(self):
+        root, pool, manifest, _ = self._workspace()
+        corpus_path = self._generate(root, pool, manifest)
+        parent = json.loads(manifest.read_text(encoding="utf-8"))
+        parent["assets"][0]["review_status"] = "pending"
+        manifest.write_text(json.dumps(parent), encoding="utf-8")
+        with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "source asset manifest rejected"):
+            GENERATOR.validate_piper_corpus_manifest(
+                corpus_path, root / "output", asset_manifest_path=manifest, asset_root=root
+            )
 
     def test_voice_pool_requires_mexican_spanish_and_english_coverage(self):
         root, pool, manifest, payload = self._workspace()
