@@ -510,6 +510,128 @@ def generate_piper_corpus(
         raise
 
 
+def validate_piper_corpus_manifest(
+    corpus_manifest_path: Path,
+    corpus_root: Path,
+    *,
+    asset_manifest_path: Path | None = None,
+    asset_root: Path | None = None,
+    require_english_and_mexican_spanish: bool = True,
+) -> list[dict[str, Any]]:
+    """Verify every generated WAV, its format, hashes, and approved voice lineage.
+
+    When asset_manifest_path and asset_root are supplied, the voice model/config
+    source records are also revalidated against the current approved manifest.
+    """
+    manifest_path = corpus_manifest_path.expanduser().resolve()
+    root = corpus_root.expanduser().resolve()
+    if not root.is_dir():
+        raise PiperCorpusError(f"Corpus directory does not exist: {root}")
+    payload = _read_json(manifest_path, "Piper corpus manifest")
+    if type(payload.get("corpus_schema_version")) is not int or payload["corpus_schema_version"] != CORPUS_SCHEMA_VERSION:
+        raise PiperCorpusError("Unsupported Piper corpus manifest schema version.")
+    if payload.get("corpus_type") != "synthetic_tts_wav":
+        raise PiperCorpusError("Corpus manifest type must be synthetic_tts_wav.")
+    if payload.get("sample_rate") != TARGET_SAMPLE_RATE or payload.get("channels") != 1 or payload.get("sample_format") != "PCM16":
+        raise PiperCorpusError("Corpus manifest must declare 16 kHz mono PCM16 audio.")
+
+    entries = payload.get("entries")
+    expected_count = payload.get("sample_count")
+    if not isinstance(entries, list) or not isinstance(expected_count, int) or len(entries) != expected_count or expected_count <= 0:
+        raise PiperCorpusError("Corpus entry count does not match the declared sample_count.")
+    source_ids = payload.get("source_asset_ids")
+    if not isinstance(source_ids, list) or not source_ids or any(not isinstance(item, str) or not item for item in source_ids):
+        raise PiperCorpusError("source_asset_ids must contain the reviewed Piper model/config asset IDs.")
+    if len(set(source_ids)) != len(source_ids):
+        raise PiperCorpusError("source_asset_ids must be unique.")
+
+    approved_assets: dict[str, dict[str, Any]] = {}
+    if (asset_manifest_path is None) != (asset_root is None):
+        raise PiperCorpusError("asset_manifest_path and asset_root must be supplied together.")
+    if asset_manifest_path is not None and asset_root is not None:
+        try:
+            from tools.wake_word_training.asset_manifest import validate_manifest
+            from tools.wake_word_training.asset_manifest import ManifestError
+        except ImportError:
+            from asset_manifest import validate_manifest, ManifestError
+        try:
+            approved_ids = set(validate_manifest(
+                asset_manifest_path, asset_root, verify_hashes=True, required_use="model_training"
+            ))
+        except ManifestError as exc:
+            raise PiperCorpusError(f"Voice source asset manifest rejected: {exc}") from exc
+        parent = _read_json(asset_manifest_path, "training asset manifest")
+        approved_assets = {
+            item["asset_id"]: item
+            for item in parent.get("assets", [])
+            if isinstance(item, dict) and isinstance(item.get("asset_id"), str)
+        }
+        missing = sorted(set(source_ids) - approved_ids)
+        if missing:
+            raise PiperCorpusError("Corpus references unapproved voice assets: " + ", ".join(missing))
+        for asset_id in source_ids:
+            if approved_assets.get(asset_id, {}).get("asset_type") not in ("voice_model", "voice_config"):
+                raise PiperCorpusError(f"Corpus lineage asset {asset_id!r} is not a Piper voice model/config.")
+
+    seen_paths: set[str] = set()
+    observed_sources: set[str] = set()
+    observed_languages: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"entries[{index}]"
+        if not isinstance(entry, dict):
+            raise PiperCorpusError(f"{label} must be an object.")
+        name = entry.get("relative_path")
+        try:
+            name = _safe_filename(name)
+        except PiperCorpusError as exc:
+            raise PiperCorpusError(f"{label}: {exc}") from exc
+        if name in seen_paths:
+            raise PiperCorpusError(f"Duplicate corpus WAV path: {name}")
+        seen_paths.add(name)
+        path = (root / name).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise PiperCorpusError(f"{label} path escapes the corpus directory.") from exc
+        if not path.is_file():
+            raise PiperCorpusError(f"Corpus WAV file is missing: {name}")
+        expected_hash = entry.get("sha256")
+        if not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+            raise PiperCorpusError(f"{label}.sha256 must be a lowercase SHA-256 digest.")
+        if _sha256_file(path) != expected_hash:
+            raise PiperCorpusError(f"SHA-256 mismatch for corpus WAV {name}.")
+        try:
+            with wave.open(str(path), "rb") as audio_file:
+                wav_format = (audio_file.getnchannels(), audio_file.getsampwidth(), audio_file.getframerate(), audio_file.getnframes())
+        except (OSError, wave.Error) as exc:
+            raise PiperCorpusError(f"Invalid WAV file {name}: {exc}") from exc
+        if wav_format[0] != 1 or wav_format[1] != 2 or wav_format[2] != TARGET_SAMPLE_RATE or wav_format[3] <= 0:
+            raise PiperCorpusError(f"{name} is not non-empty 16 kHz mono PCM16 audio.")
+
+        language = entry.get("language")
+        voice_id = entry.get("voice_id")
+        model_id = entry.get("model_asset_id")
+        config_id = entry.get("config_asset_id")
+        if not isinstance(language, str) or not isinstance(voice_id, str) or not voice_id:
+            raise PiperCorpusError(f"{label} is missing its language or voice_id.")
+        if model_id not in source_ids or config_id not in source_ids:
+            raise PiperCorpusError(f"{label} references voice assets absent from source_asset_ids.")
+        if approved_assets:
+            if approved_assets[model_id]["asset_type"] != "voice_model" or approved_assets[config_id]["asset_type"] != "voice_config":
+                raise PiperCorpusError(f"{label} has mismatched voice model/config lineage types.")
+        observed_sources.update((model_id, config_id))
+        observed_languages.add(language)
+
+    if observed_sources != set(source_ids):
+        raise PiperCorpusError("source_asset_ids does not exactly match the voice assets used by the WAV entries.")
+    if payload.get("languages") != sorted(observed_languages):
+        raise PiperCorpusError("Corpus languages summary does not match the individual entries.")
+    has_english = any(language.casefold().startswith("en-") for language in observed_languages)
+    has_spanish = "es-mx" in {language.casefold() for language in observed_languages}
+    if require_english_and_mexican_spanish and not (has_english and has_spanish):
+        raise PiperCorpusError("Corpus must include both English and Mexican-Spanish WAV entries.")
+    return entries
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--voice-pool", type=Path, required=True)
