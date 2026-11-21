@@ -225,6 +225,9 @@ class TrainerBridgeTests(unittest.TestCase):
                 return iter(self.rows)
 
             def __getitem__(self, item):
+                if isinstance(item, tuple):
+                    row_slice, column_slice = item
+                    return [row[column_slice] for row in self.rows[row_slice]]
                 return self.rows[item]
 
         class Batch:
