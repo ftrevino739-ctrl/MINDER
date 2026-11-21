@@ -307,7 +307,8 @@ def validate_feature_preparation_workspace(
     if any(not isinstance(rate, int) or isinstance(rate, bool) or not 1 <= rate <= 20 for rate in rates):
         raise FeaturePreparationError("Background duplication rates must be integers between 1 and 20.")
 
-    corpora: dict[str, list[Path]] = {}    source_asset_ids: list[str] = []
+    corpora: dict[str, list[Path]] = {}
+    source_asset_ids: list[str] = []
     for split, _, count_key in _SPLITS:
         expected_count = int(config[count_key])
         paths, corpus_ids = _corpus_registration(
