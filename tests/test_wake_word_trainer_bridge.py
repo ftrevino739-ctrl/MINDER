@@ -2,6 +2,8 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -160,6 +162,21 @@ def _approved_manifest(root, relative_paths):
 
 
 class TrainerBridgeTests(unittest.TestCase):
+    def test_trainer_bridge_cli_help_runs_outside_repository_cwd(self):
+        script = Path(BRIDGE.__file__).resolve()
+        with tempfile.TemporaryDirectory() as folder:
+            result = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=folder,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--confirm-heavy-training", result.stdout)
+        self.assertIn("--asset-manifest", result.stdout)
+
     def test_checkout_gate_requires_the_reviewed_upstream_commit(self):
         class Result:
             def __init__(self, output, returncode=0):
