@@ -267,7 +267,8 @@ class PipelineEngine:
         if not self.auto_turn:
             # PTT normally ends the buffer on key release. A stuck key or a
             # missed release must not let one session retain unbounded PCM.
-            max_bytes = int(16_000 * _PTT_MAX_TURN_S) * 2
+            from . import audio as _a
+            max_bytes = int(_a.MIC_RATE * _PTT_MAX_TURN_S) * _a.SAMPLE_WIDTH
             if self._mic_bytes + len(data) > max_bytes:
                 if not self._mic_limit_reported:
                     self._mic_limit_reported = True
