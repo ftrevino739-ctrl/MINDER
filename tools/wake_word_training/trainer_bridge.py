@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -20,6 +21,7 @@ from typing import Any, Callable, Mapping
 
 FEATURE_DIMENSIONS = 96
 EXPECTED_MODEL_NAME = "hey_minder"
+PINNED_OPENWAKEWORD_COMMIT = "368c03716d1e92591906a84949bc477f3a834455"
 DEFAULT_VALIDATION_BATCH_SIZE = 1024
 MAX_VALIDATION_BATCH_SIZE = 4096
 
@@ -66,6 +68,33 @@ def resolve_training_path(training_root: Path, value: str | Path) -> Path:
     path = Path(value)
     return path.resolve() if path.is_absolute() else (training_root / path).resolve()
 
+
+def verify_pinned_openwakeword_checkout(training_root: Path) -> str:
+    """Require the exact upstream source revision reviewed by MINDER."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(training_root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise TrainingBridgeError(
+            f"Cannot verify openWakeWord Git checkout at {training_root}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "git rev-parse failed").strip()
+        raise TrainingBridgeError(
+            f"Training root is not a readable Git checkout: {training_root} ({detail})"
+        )
+    actual = result.stdout.strip().lower()
+    if actual != PINNED_OPENWAKEWORD_COMMIT:
+        raise TrainingBridgeError(
+            "The Windows trainer bridge only supports the reviewed openWakeWord "
+            f"commit {PINNED_OPENWAKEWORD_COMMIT}; found {actual or \"unknown\"}."
+        )
+    return actual
 
 def validate_minder_config(config: Mapping[str, Any]) -> None:
     """Reject configuration drift from the MINDER wake phrase/model contract."""
@@ -290,11 +319,15 @@ def validate_training_workspace(
     config: Mapping[str, Any],
     training_root: Path,
     manifest_path: Path,
+    *,
+    require_pinned_checkout: bool = False,
 ) -> tuple[dict[str, Path], list[str]]:
     """Read-only disk/config/manifest gate; never imports ML dependencies."""
     root = training_root.expanduser().resolve()
     if not root.is_dir():
         raise TrainingBridgeError(f"Training root does not exist: {root}")
+    if require_pinned_checkout:
+        verify_pinned_openwakeword_checkout(root)
     validate_minder_config(config)
 
     paths = _required_feature_paths(config, root)
@@ -365,6 +398,7 @@ def build_training_bundle(
     *,
     validation_batch_size: int = DEFAULT_VALIDATION_BATCH_SIZE,
     dependencies: tuple[Any, Any, Any, Any] | None = None,
+    require_pinned_checkout: bool = True,
 ) -> TrainingBundle:
     """Build the Windows-safe, re-iterable train/validation streams.
 
@@ -379,7 +413,9 @@ def build_training_bundle(
         )
 
     root = training_root.expanduser().resolve()
-    paths, _asset_ids = validate_training_workspace(config, root, manifest_path)
+    paths, _asset_ids = validate_training_workspace(
+        config, root, manifest_path, require_pinned_checkout=require_pinned_checkout
+    )
     np, torch, mmap_batch_generator, Model = dependencies or _load_training_dependencies()
 
     arrays = {
@@ -567,6 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             args.training_root,
             args.asset_manifest,
+            require_pinned_checkout=True,
         )
         print("MINDER training workspace PASSED.")
         print(f"Reviewed asset records: {len(asset_ids)}")
