@@ -229,3 +229,49 @@ contract using lightweight test doubles. It is not yet wired into an approved
 full training command; the community trainer remains unapproved until its
 data downloader, config mapping, voice coverage and end-to-end training
 behavior are independently validated.
+
+
+## Dataset provenance and human approval gate
+
+A second release blocker was found during the source audit: the community
+candidate's FMA downloader blindly selects MP3s and does not consult the
+per-track license metadata or retain attribution. The FMA maintainers state
+that they do not hold copyright in the audio; each track is distributed under
+the artist-selected license. The candidate's AudioSet mirror is labelled
+CC BY 4.0 but contains YouTube-derived clips, so its repository-level label
+must not be treated as a substitute for reviewing source terms. The
+openwakeword_features dataset is labelled CC BY-NC-SA 4.0; assess the
+obligations for any model trained from those features before distributing
+that model. See
+[MINDER_WAKE_WORD_WINDOWS_COMPATIBILITY.md](../../MINDER_WAKE_WORD_WINDOWS_COMPATIBILITY.md)
+for the source-by-source findings.
+
+MINDER now includes a small stdlib-only manifest validator:
+
+- `asset_manifest.example.json` is a template. It deliberately has
+  `review_status: pending` and cannot pass until a human fills in real
+  provenance and approval details.
+- `asset_manifest.py` requires a canonical HTTPS source, immutable source
+  revision, exact license identifier, attribution, restrictions, review
+  identity/date, explicit approval for `model_training`, a safe relative
+  path and a SHA-256 that matches the local file.
+- It rejects unapproved assets, path traversal, duplicated IDs and hash
+  mismatches. Hashing is streamed in 1 MiB chunks.
+- It does not interpret legal terms or decide whether a license permits a
+  model-training use. A successful result records a human review and proves
+  local byte integrity; it is not a legal opinion.
+
+Example invocation after an asset has been independently obtained and
+reviewed:
+
+```powershell
+python tools/wake_word_training/asset_manifest.py `
+  --manifest "PATH\TO\asset_manifest.json" `
+  --asset-root "PATH\TO\training_assets"
+```
+
+Do not mark any openWakeWord feature file, FMA track, AudioSet clip or voice
+model approved just to make this check pass. The external candidate downloader
+is still not approved, and the manifest tool is not yet wired into a complete
+Windows trainer. No source datasets, clips or voice files have been downloaded
+for MINDER.
