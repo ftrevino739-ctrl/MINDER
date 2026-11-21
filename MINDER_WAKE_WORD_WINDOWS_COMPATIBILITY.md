@@ -160,3 +160,5 @@ text, verify the reviewer's legal conclusion or decide whether a model is
 derivative. It is not yet wired into a complete Windows training command.
 Do not download, mark approved or train on any candidate asset until the
 source-specific review and provenance manifest are complete.
+
+The manifest schema also records `derived_from` asset IDs. Original sources use an empty list; generated WAVs, embeddings or other derivatives must reference their inputs. Validation rejects unknown source IDs, self-references and provenance cycles, so a derived training file cannot silently lose its source lineage.
