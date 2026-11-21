@@ -253,12 +253,19 @@ def _write_pcm16_wav_exclusive(path: Path, audio: Any, *, numpy_module: Any) -> 
     pcm = (samples * 32767.0).astype(numpy_module.int16)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(str(path), flags, 0o600)
-    with os.fdopen(descriptor, "wb") as raw:
-        with wave.open(raw, "wb") as output:
-            output.setnchannels(1)
-            output.setsampwidth(2)
-            output.setframerate(TARGET_SAMPLE_RATE)
-            output.writeframes(pcm.tobytes())
+    try:
+        with os.fdopen(descriptor, "wb") as raw:
+            with wave.open(raw, "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(TARGET_SAMPLE_RATE)
+                output.writeframes(pcm.tobytes())
+    except Exception:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 def generate_piper_corpus(
     text: str | Sequence[str],
