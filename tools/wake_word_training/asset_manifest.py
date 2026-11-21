@@ -80,7 +80,7 @@ def validate_manifest(
         raise ManifestError(f"Cannot read JSON manifest: {exc}") from exc
 
     if (not isinstance(payload, dict)
-            or isinstance(payload.get("manifest_version"), bool)
+            or type(payload.get("manifest_version")) is not int
             or payload.get("manifest_version") != 1):
         raise ManifestError("manifest_version must be exactly 1")
     assets = payload.get("assets")
