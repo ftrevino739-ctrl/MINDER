@@ -16,7 +16,8 @@
       "review_status": "pending",
       "reviewed_by": "",
       "reviewed_at": "",
-      "approved_uses": []
+      "approved_uses": [],
+      "derived_from": []
     }
   ]
 }
