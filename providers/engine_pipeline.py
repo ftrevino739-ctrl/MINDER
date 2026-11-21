@@ -144,6 +144,10 @@ class PipelineEngine:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._gen: Optional[asyncio.Task] = None
         self._closed = False
+        # The UI can call interrupt() from the Qt/hotkey thread. Keep the
+        # owning loop so task cancellation and event delivery are marshalled
+        # back onto the asyncio loop that created this engine.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Tool calls handed out and not yet answered. A model that emits two
         # calls in one turn must have BOTH answered before the next generation,
         # or the second result arrives with no call to attach to and several
@@ -370,13 +374,21 @@ class PipelineEngine:
             self._start_generation()
 
     async def receive(self) -> AsyncIterator[Msg]:
+        self._bind_loop()
         while True:
             msg = await self._queue.get()
             if msg is None:
                 return
             yield msg
 
+    def _bind_loop(self) -> asyncio.AbstractEventLoop:
+        """Remember the loop that owns this engine's tasks and queue."""
+        loop = asyncio.get_running_loop()
+        self._loop = loop
+        return loop
+
     async def close(self) -> None:
+        self._bind_loop()
         self._closed = True
         if self._gen and not self._gen.done():
             self._gen.cancel()
@@ -404,17 +416,44 @@ class PipelineEngine:
 
     # ── interruption ─────────────────────────────────────────────────────────
     def interrupt(self) -> None:
-        """Stop the current generation. Called when the user talks over it.
+        """Stop generation safely from the Qt thread or the asyncio loop.
 
-        The generation is cancelled but the history is left as it is: whatever
-        was already said was heard, and deleting it would make the assistant
-        deny having said something the user is replying to.
+        main.py can invoke this from a UI/hotkey callback. Task.cancel() is not
+        thread-safe, so state changes are marshalled to the loop that owns the
+        task. A terminal event is queued too, allowing main.py to clear its
+        interrupted-turn flag and resume listening.
         """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is loop:
+            self._interrupt_on_loop()
+        else:
+            try:
+                loop.call_soon_threadsafe(self._interrupt_on_loop)
+            except RuntimeError:
+                # The owning loop may have started shutting down.
+                return
+
+    def _interrupt_on_loop(self) -> None:
+        """Cancel provider work and close the current UI turn on its loop."""
+        if self._closed:
+            return
         if self._gen and not self._gen.done():
             self._gen.cancel()
+        # Do not restart a queued system injection after the user interrupts.
+        self._followup = False
+        self._queue.put_nowait(Msg.turn_end())
 
     # ── generation ───────────────────────────────────────────────────────────
     def _queue_generation(self) -> None:
+        self._bind_loop()
         """Answer this, after whatever is already being answered.
 
         The first version cancelled the generation in flight. That is right for
@@ -433,6 +472,7 @@ class PipelineEngine:
         self._gen = asyncio.create_task(self._generate())
 
     def _start_generation(self) -> None:
+        self._bind_loop()
         """Generate now, replacing anything running. Only used where the
         conversation genuinely moved on — a tool result completing the turn."""
         if self._gen and not self._gen.done():
