@@ -32,6 +32,7 @@ _REQUIRED_FIELDS = {
     "reviewed_by",
     "reviewed_at",
     "approved_uses",
+    "derived_from",
 }
 
 
@@ -89,6 +90,7 @@ def validate_manifest(
 
     errors: list[str] = []
     seen_ids: set[str] = set()
+    provenance_edges: dict[str, list[str]] = {}
 
     for index, asset in enumerate(assets):
         label = f"assets[{index}]"
@@ -108,6 +110,14 @@ def validate_manifest(
         if asset_id in seen_ids:
             errors.append(f"Duplicate asset_id: {asset_id}")
         seen_ids.add(asset_id)
+
+        parents = asset["derived_from"]
+        if not isinstance(parents, list) or any(not _is_nonempty_text(item) for item in parents):
+            errors.append(f"{label}.derived_from must be a list of asset IDs (empty for original sources)")
+        else:
+            if asset_id in parents:
+                errors.append(f"{label}.derived_from cannot reference the asset itself")
+            provenance_edges[asset_id] = parents
 
         for field in ("asset_type", "source_url", "source_revision",
                       "relative_path", "license_id", "reviewed_by", "reviewed_at"):
@@ -155,6 +165,32 @@ def validate_manifest(
                         errors.append(f"{label} SHA-256 mismatch for {asset['relative_path']}")
             except (OSError, ManifestError) as exc:
                 errors.append(f"{label} path/hash check failed: {exc}")
+
+    # Every derivative must point to known source records. Reject cycles so
+    # the provenance graph is an actual source-to-derived chain.
+    for asset_id, parents in provenance_edges.items():
+        for parent_id in parents:
+            if parent_id not in seen_ids:
+                errors.append(f"Asset {asset_id!r} references unknown derived_from asset {parent_id!r}")
+
+    visited: set[str] = set()
+    active: set[str] = set()
+
+    def visit(asset_id: str) -> None:
+        if asset_id in active:
+            errors.append(f"Provenance cycle detected at asset {asset_id!r}")
+            return
+        if asset_id in visited:
+            return
+        active.add(asset_id)
+        for parent_id in provenance_edges.get(asset_id, []):
+            if parent_id in provenance_edges:
+                visit(parent_id)
+        active.remove(asset_id)
+        visited.add(asset_id)
+
+    for asset_id in provenance_edges:
+        visit(asset_id)
 
     if errors:
         raise ManifestError("\n".join(errors))
