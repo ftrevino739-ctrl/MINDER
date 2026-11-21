@@ -95,7 +95,8 @@ class FeaturePreparationTests(unittest.TestCase):
                     label="background",
                 )
 
-            directory.rmdir()
+            (directory / "subdir" / "noise.wav").unlink()
+            (directory / "subdir").rmdir()
             (directory / "noise.wav").write_bytes(b"noise")
             with self.assertRaisesRegex(PREP.FeaturePreparationError, "unique reviewed asset"):
                 PREP._approved_flat_audio_files(
@@ -192,9 +193,9 @@ class FeaturePreparationTests(unittest.TestCase):
 
             def fake_writer(generator, **kwargs):
                 counter["writes"] += 1
-                kwargs["output_path"].write_bytes(b"new features")
                 if counter["writes"] == 2:
                     raise RuntimeError("synthetic test failure")
+                kwargs["output_path"].write_bytes(b"new features")
 
             with patch.object(PREP, "write_features_from_generator", side_effect=fake_writer):
                 with self.assertRaisesRegex(PREP.FeaturePreparationError, "synthetic test failure"):
