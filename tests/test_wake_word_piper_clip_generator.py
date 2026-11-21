@@ -186,7 +186,8 @@ class PiperClipGeneratorTests(unittest.TestCase):
             GENERATOR.load_approved_voice_records(pool, manifest, root)
 
     def test_voice_model_must_be_approved_for_training(self):
-        root, pool, manifest, payload = self._workspace()
+        root, pool, manifest, _pool_payload = self._workspace()
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
         payload["assets"][0]["review_status"] = "pending"
         manifest.write_text(json.dumps(payload), encoding="utf-8")
         with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "manifest rejected"):
