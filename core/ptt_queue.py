@@ -89,9 +89,9 @@ def schedule_flush_barrier(
 
     The caller must hold the same lock used by enqueue_microphone_frame while
     scheduling this marker. It is inserted synchronously on the event-loop
-    thread, before later PTT presses can schedule another frame. If the bounded
-    queue is full, a waiter preserves the marker rather than dropping the turn
-    boundary.
+    thread, before later PTT presses can schedule another frame. The application's
+    MicrophoneQueue reserves one temporary control slot when full, keeping later
+    audio behind the marker without allowing the bounded PCM backlog to grow.
     """
     if loop is None or queue is None or engine is None or loop.is_closed():
         return
