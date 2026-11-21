@@ -470,7 +470,11 @@ def generate_piper_corpus(
             "sample_rate": TARGET_SAMPLE_RATE,
             "channels": 1,
             "sample_format": "PCM16",
-            "source_asset_ids": source_asset_ids,
+            "source_asset_ids": sorted({
+    asset_id
+    for entry in entries
+    for asset_id in (entry["model_asset_id"], entry["config_asset_id"])
+}),
             "sample_count": sample_count,
             "languages": sorted({entry["language"] for entry in entries}),
             "entries": entries,
