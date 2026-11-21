@@ -80,6 +80,7 @@ _DEFAULT_HISTORY_CHARS = 24_000
 _VAD_SILENCE_MS = 700      # quiet for this long after speech = the turn ended
 _VAD_MIN_SPEECH_MS = 250   # shorter than this is a cough, a click, a door
 _VAD_MAX_TURN_S = 30.0     # a runaway stream is flushed rather than kept for ever
+_PTT_MAX_TURN_S = 120.0  # cap an accidentally held microphone buffer at two minutes
 _VAD_FLOOR_MARGIN = 3.5    # speech is this many times the measured noise floor
 _VAD_ABSOLUTE_MIN = 0.006  # ...and never below this, so a silent room's own
                            # floor of near-zero cannot make hiss into speech
@@ -167,6 +168,7 @@ class PipelineEngine:
         self._followup = False
         self._mic: list[bytes] = []
         self._mic_bytes = 0
+        self._mic_limit_reported = False
         # Turn detection state. `auto_turn` is off unless something switches it
         # on, so push-to-talk keeps behaving exactly as it does today.
         self.auto_turn = False
@@ -262,6 +264,24 @@ class PipelineEngine:
         data = _pcm_of(audio)
         if not data:
             return
+        if not self.auto_turn:
+            # PTT normally ends the buffer on key release. A stuck key or a
+            # missed release must not let one session retain unbounded PCM.
+            max_bytes = int(16_000 * _PTT_MAX_TURN_S) * 2
+            if self._mic_bytes + len(data) > max_bytes:
+                if not self._mic_limit_reported:
+                    self._mic_limit_reported = True
+                    try:
+                        self._log(
+                            "SYS: Push-to-talk audio reached its "
+                            f"{_PTT_MAX_TURN_S:g}-second buffer limit. "
+                            "Release PTT to transcribe the captured audio; "
+                            "later microphone frames are not being buffered."
+                        )
+                    except Exception:
+                        pass
+                return
+
         self._mic.append(data)
         self._mic_bytes += len(data)
         if self.auto_turn:
@@ -278,6 +298,13 @@ class PipelineEngine:
 
         rms = float(np.sqrt(np.mean(samples * samples)))
         ms = samples.size / _a.MIC_RATE * 1000.0
+        max_bytes = int(_a.MIC_RATE * _VAD_MAX_TURN_S) * _a.SAMPLE_WIDTH
+        if self._mic_bytes >= max_bytes:
+            # Check before the speech/quiet branches: continuous speech used to
+            # return early forever and bypass the old maximum-turn check.
+            self._reset_vad()
+            await self.flush_microphone()
+            return
 
         # The floor tracks downward quickly and upward slowly: a room that goes
         # quiet should be recognised at once, while one loud moment must not
@@ -307,8 +334,7 @@ class PipelineEngine:
             return
 
         self._vad_quiet_ms += ms
-        max_bytes = int(_a.MIC_RATE * _VAD_MAX_TURN_S) * _a.SAMPLE_WIDTH
-        if self._vad_quiet_ms >= _VAD_SILENCE_MS or self._mic_bytes >= max_bytes:
+        if self._vad_quiet_ms >= _VAD_SILENCE_MS:
             self._reset_vad()
             await self.flush_microphone()
 
@@ -821,6 +847,7 @@ class PipelineEngine:
         if self._stt is None or not self._mic:
             return ""
         pcm, self._mic, self._mic_bytes = b"".join(self._mic), [], 0
+        self._mic_limit_reported = False
         from . import audio as _a
 
         self._timing = {"heard_s": _a.duration_s(pcm, sample_rate)}
