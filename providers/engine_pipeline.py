@@ -153,6 +153,10 @@ class PipelineEngine:
         # or the second result arrives with no call to attach to and several
         # servers reject the whole request for it.
         self._awaiting: dict[str, str] = {}
+        # Tool calls already dispatched when the user interrupted. Their
+        # eventual results are recorded, but must not restart the interrupted
+        # assistant answer after the user has taken the floor.
+        self._interrupted_tool_ids: set[str] = set()
         # What has already been run this turn: signature -> the result the tool
         # gave. Cleared when the user speaks again.
         self._done_calls: dict[str, str] = {}
@@ -347,17 +351,22 @@ class PipelineEngine:
         """Tool results. Returns immediately — see the module docstring."""
         if self._closed:
             return
+        self._bind_loop()
         started = self._timing.get("tool_at")
         if started:
             self._tick("tools", time.monotonic() - started)
             self._timing["tool_names"] = ", ".join(
                 sorted(set(self._awaiting.values()))) or ""
+        interrupted_result = False
         for fr in function_responses or []:
             call_id = str(getattr(fr, "id", "") or "")
             name = str(getattr(fr, "name", "") or self._awaiting.get(call_id, ""))
             payload = getattr(fr, "response", None)
             if isinstance(payload, dict) and "result" in payload:
                 payload = payload["result"]
+            if call_id and call_id in self._interrupted_tool_ids:
+                self._interrupted_tool_ids.discard(call_id)
+                interrupted_result = True
             sig = getattr(self, "_pending_sigs", {}).pop(call_id, "")
             if sig:
                 self._done_calls[sig] = _stringify(payload)
@@ -370,7 +379,9 @@ class PipelineEngine:
             self._awaiting.pop(call_id, None)
 
         # Only ask the model again once every call it made has an answer.
-        if not self._awaiting:
+        # A tool that was already running when the user interrupted is allowed
+        # to finish, but its late result must not revive the stopped turn.
+        if not self._awaiting and not interrupted_result:
             self._start_generation()
 
     async def receive(self) -> AsyncIterator[Msg]:
@@ -447,6 +458,9 @@ class PipelineEngine:
             return
         if self._gen and not self._gen.done():
             self._gen.cancel()
+        # Tools already dispatched are not force-killed, but their eventual
+        # responses must not restart the assistant turn the user stopped.
+        self._interrupted_tool_ids.update(self._awaiting)
         # Do not restart a queued system injection after the user interrupts.
         self._followup = False
         self._queue.put_nowait(Msg.turn_end())
