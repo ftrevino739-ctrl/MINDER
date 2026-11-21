@@ -2,6 +2,8 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 import wave
@@ -18,6 +20,21 @@ class FakeNumpy:
 
 
 class FeaturePreparationTests(unittest.TestCase):
+    def test_prepare_features_cli_help_runs_outside_the_repository_cwd(self):
+        script = Path(PREP.__file__).resolve()
+        with tempfile.TemporaryDirectory() as folder:
+            result = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=folder,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--confirm-heavy-preparation", result.stdout)
+        self.assertIn("--positive-train-corpus-manifest", result.stdout)
+
     def test_choose_clip_length_uses_upstream_median_plus_750ms_rule(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
