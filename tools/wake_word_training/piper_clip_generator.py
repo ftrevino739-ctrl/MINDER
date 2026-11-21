@@ -14,7 +14,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
+import uuid
 import re
 import sys
 import wave
@@ -204,7 +206,8 @@ def _validate_texts(text: str | Sequence[str]) -> list[str]:
 
 
 def _safe_filename(name: str) -> str:
-    if not isinstance(name, str) or not name or Path(name).name != name:
+    if (not isinstance(name, str) or not name or Path(name).name != name
+            or "\\" in name or "/" in name or ":" in name):
         raise PiperCorpusError(f"Output filename must be a simple basename: {name!r}")
     if not name.casefold().endswith(".wav") or name in (".wav", "..wav"):
         raise PiperCorpusError(f"Output filename must end with .wav: {name!r}")
@@ -241,6 +244,22 @@ def _write_pcm16_wav(path: Path, audio: Any, *, numpy_module: Any) -> None:
         output.writeframes(pcm.tobytes())
 
 
+def _write_pcm16_wav_exclusive(path: Path, audio: Any, *, numpy_module: Any) -> None:
+    """Create a new WAV atomically with exclusive file creation (never truncate)."""
+    samples = numpy_module.asarray(audio, dtype=numpy_module.float32)
+    if getattr(samples, "ndim", None) != 1 or samples.size == 0:
+        raise PiperCorpusError("Piper synthesis must return non-empty mono audio.")
+    samples = numpy_module.clip(samples, -1.0, 1.0)
+    pcm = (samples * 32767.0).astype(numpy_module.int16)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    descriptor = os.open(str(path), flags, 0o600)
+    with os.fdopen(descriptor, "wb") as raw:
+        with wave.open(raw, "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(TARGET_SAMPLE_RATE)
+            output.writeframes(pcm.tobytes())
+
 def generate_piper_corpus(
     text: str | Sequence[str],
     *,
@@ -251,12 +270,10 @@ def generate_piper_corpus(
     output_dir: Path,
     corpus_manifest_path: Path,
     seed: int,
-    batch_size: int = 1,
     length_scales: Sequence[float] = (0.75, 1.0, 1.25),
     noise_scales: Sequence[float] = (0.98,),
     noise_width_scales: Sequence[float] = (0.98,),
     file_names: Sequence[str] | None = None,
-    overwrite: bool = False,
     require_english_and_mexican_spanish: bool = True,
     piper_api: Any | None = None,
     resample_fn: Callable[[Any, int, int], Any] | None = None,
@@ -269,19 +286,14 @@ def generate_piper_corpus(
     A separate corpus manifest records source IDs and each output file's
     hash, voice, language, speaker, text, and synthesis settings.
 
-    Existing output filenames and the corpus manifest are never overwritten
-    unless overwrite=True. This routine does not write an asset approval into
-    the parent manifest; the resulting corpus still needs human review.
+    Existing output filenames and corpus manifests are always rejected. Choose
+    a new output directory for a new corpus; the routine never overwrites files.
+    This routine does not approve the generated corpus in the parent manifest.
     """
     if isinstance(sample_count, bool) or not isinstance(sample_count, int) or sample_count <= 0:
         raise PiperCorpusError("sample_count must be a positive integer.")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise PiperCorpusError("seed must be a non-negative integer.")
-    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
-        raise PiperCorpusError("batch_size must be a positive integer.")
-    if sample_count > 0 and batch_size > 256:
-        raise PiperCorpusError("batch_size must not exceed 256 for bounded memory.")
-
     phrases = _validate_texts(text)
     if not length_scales or not noise_scales or not noise_width_scales:
         raise PiperCorpusError("All synthesis variation lists must be non-empty.")
@@ -308,7 +320,7 @@ def generate_piper_corpus(
         corpus_manifest.relative_to(output_root)
     except ValueError as exc:
         raise PiperCorpusError("Corpus manifest must be inside the corpus output directory.") from exc
-    if corpus_manifest.exists() and not overwrite:
+    if corpus_manifest.exists():
         raise PiperCorpusError(f"Refusing to replace existing corpus manifest: {corpus_manifest}")
 
     if file_names is not None and len(file_names) != sample_count:
@@ -322,7 +334,7 @@ def generate_piper_corpus(
         raise PiperCorpusError("file_names must be unique.")
     output_paths = [output_root / name for name in names]
     existing = [path.name for path in output_paths if path.exists()]
-    if existing and not overwrite:
+    if existing:
         raise PiperCorpusError(
             "Refusing to overwrite existing WAV output(s): " + ", ".join(existing[:5])
         )
@@ -356,14 +368,16 @@ def generate_piper_corpus(
             ) from exc
 
     rng = random.Random(seed)
-    records_by_id = {record.voice_id: record for record in voices}
-    weights = [record.weight for record in voices]
+    voice_cycle = [record for record in voices for _ in range(record.weight)]
+    rng.shuffle(voice_cycle)
     entries: list[dict[str, Any]] = []
     completed_paths: list[Path] = []
 
     try:
         for index, name in enumerate(names):
-            voice_record = rng.choices(voices, weights=weights, k=1)[0]
+            if index and index % len(voice_cycle) == 0:
+                rng.shuffle(voice_cycle)
+            voice_record = voice_cycle[index % len(voice_cycle)]
             loaded_voice = voice_instances[voice_record.voice_id]
             voice_config = loaded_voice.config
             speaker_count = int(getattr(voice_config, "num_speakers", 1) or 1)
@@ -420,7 +434,7 @@ def generate_piper_corpus(
                 audio = resample_fn(audio, source_rate, TARGET_SAMPLE_RATE)
             audio = np.asarray(audio, dtype=np.float32)
             output_path = output_root / name
-            _write_pcm16_wav(output_path, audio, numpy_module=np)
+            _write_pcm16_wav_exclusive(output_path, audio, numpy_module=np)
             completed_paths.append(output_path)
 
             entries.append({
@@ -455,13 +469,17 @@ def generate_piper_corpus(
             "entries": entries,
         }
         temporary_manifest = corpus_manifest.with_name(
-            f".{corpus_manifest.stem}.{seed}.partial.json"
+            f".{corpus_manifest.stem}.{uuid.uuid4().hex}.partial.json"
         )
         temporary_manifest.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        temporary_manifest.replace(corpus_manifest)
+        try:
+            os.link(temporary_manifest, corpus_manifest)
+        except OSError as exc:
+            raise PiperCorpusError(f"Could not publish corpus manifest without overwriting: {exc}") from exc
+        temporary_manifest.unlink(missing_ok=True)
         return corpus_manifest
     except Exception:
         # Leave user-owned/pre-existing files untouched; remove only files that
@@ -485,8 +503,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="Phrase to synthesize. May be repeated for a text pool.")
     parser.add_argument("--samples", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
 
     try:
@@ -499,8 +515,6 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output_dir,
             corpus_manifest_path=args.corpus_manifest,
             seed=args.seed,
-            batch_size=args.batch_size,
-            overwrite=args.overwrite,
         )
     except PiperCorpusError as exc:
         print(f"MINDER Piper corpus generation FAILED: {exc}", file=sys.stderr)
