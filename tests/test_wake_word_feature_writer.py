@@ -10,6 +10,7 @@ from tools.wake_word_training import feature_writer as WRITER
 class FakePcmBatch:
     def __init__(self, count, samples=32000):
         self.shape = (count, samples)
+        self.dtype = "int16"
 
 
 class FakeEmbeddings:
@@ -150,6 +151,33 @@ class FeatureWriterTests(unittest.TestCase):
                 WRITER.write_features_from_generator(
                     [FakePcmBatch(2), FakePcmBatch(2)],
                     total_samples=3,
+                    clip_duration_samples=32000,
+                    audio_features=FakeAudioFeatures(),
+                    output_path=output,
+                    numpy_module=FakeNumpy(),
+                )
+            self.assertFalse(output.exists())
+
+    def test_rejects_non_int16_pcm_batch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "features.npy"
+            batch = FakePcmBatch(1)
+            batch.dtype = "float32"
+            with self.assertRaisesRegex(WRITER.FeatureWriterError, "signed int16"):
+                WRITER.write_features_from_generator(
+                    [batch], total_samples=1, clip_duration_samples=32000,
+                    audio_features=FakeAudioFeatures(), output_path=output,
+                    numpy_module=FakeNumpy(),
+                )
+            self.assertFalse(output.exists())
+
+    def test_rejects_pcm_batch_with_wrong_clip_duration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "features.npy"
+            with self.assertRaisesRegex(WRITER.FeatureWriterError, "PCM batch length"):
+                WRITER.write_features_from_generator(
+                    [FakePcmBatch(1, samples=16000)],
+                    total_samples=1,
                     clip_duration_samples=32000,
                     audio_features=FakeAudioFeatures(),
                     output_path=output,
