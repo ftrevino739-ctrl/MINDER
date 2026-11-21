@@ -211,6 +211,42 @@ class PiperClipGeneratorTests(unittest.TestCase):
         with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "Mexican-Spanish"):
             GENERATOR.load_approved_voice_records(pool, manifest, root)
 
+    def test_voice_pool_rejects_unbounded_voice_weight(self):
+        root, pool, manifest, payload = self._workspace()
+        payload["voices"][0]["weight"] = 101
+        pool.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "between 1 and 100"):
+            GENERATOR.load_approved_voice_records(pool, manifest, root)
+
+    def test_rejects_stereo_piper_chunks_before_wav_creation(self):
+        root, pool, manifest, _ = self._workspace()
+
+        class StereoVoice(FakeVoice):
+            def synthesize(self, text, syn_config):
+                yield SimpleNamespace(
+                    sample_rate=16000,
+                    sample_channels=2,
+                    audio_float_array=np.asarray([[0.1, -0.1], [0.2, -0.2]], dtype=np.float32),
+                )
+
+        class StereoPiper:
+            SynthesisConfig = FakeSynthesisConfig
+
+            class PiperVoice:
+                @staticmethod
+                def load(model_path, config_path=None):
+                    return StereoVoice(Path(model_path).stem, 1)
+
+        with self.assertRaisesRegex(GENERATOR.PiperCorpusError, "must be mono"):
+            GENERATOR.generate_piper_corpus(
+                "hey minder", sample_count=2, voice_pool_path=pool,
+                asset_manifest_path=manifest, asset_root=root,
+                output_dir=root / "output",
+                corpus_manifest_path=root / "output" / "stereo.json",
+                seed=4, piper_api=StereoPiper, numpy_module=np,
+            )
+        self.assertEqual(list((root / "output").glob("*.wav")), [])
+
     def test_voice_model_must_be_approved_for_training(self):
         root, pool, manifest, _pool_payload = self._workspace()
         payload = json.loads(manifest.read_text(encoding="utf-8"))
