@@ -49,6 +49,13 @@ class AssetManifestTests(unittest.TestCase):
         manifest.write_text(json.dumps(payload), encoding="utf-8")
         return root, manifest, payload
 
+    def test_rejects_non_integer_manifest_version(self):
+        root, manifest, payload = self._workspace()
+        payload["manifest_version"] = 1.0
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(MODULE.ManifestError, "manifest_version"):
+            MODULE.validate_manifest(manifest, root)
+
     def test_accepts_human_approved_asset_with_matching_hash(self):
         root, manifest, _ = self._workspace()
         self.assertEqual(
