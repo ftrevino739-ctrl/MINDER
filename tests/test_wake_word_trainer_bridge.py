@@ -178,6 +178,22 @@ class TrainerBridgeTests(unittest.TestCase):
             with self.assertRaisesRegex(BRIDGE.TrainingBridgeError, "only supports the reviewed"):
                 BRIDGE.verify_pinned_openwakeword_checkout(Path("."))
 
+    def test_cli_refuses_heavy_training_without_both_confirmation_flags(self):
+        common = [
+            "--training-root", "unused-training-root",
+            "--config", "unused-config.yml",
+            "--asset-manifest", "unused-manifest.json",
+            "--execute",
+        ]
+        with self.assertRaises(SystemExit) as caught:
+            BRIDGE.main(common)
+        self.assertEqual(caught.exception.code, 2)
+
+        without_execute = common[:-1] + ["--confirm-heavy-training"]
+        with self.assertRaises(SystemExit) as caught:
+            BRIDGE.main(without_execute)
+        self.assertEqual(caught.exception.code, 2)
+
     def test_accepts_current_minder_training_profile(self):
         BRIDGE.validate_minder_config(_project_config())
 
