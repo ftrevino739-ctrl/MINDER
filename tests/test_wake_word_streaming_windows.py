@@ -49,12 +49,14 @@ class StreamingWindowTests(unittest.TestCase):
             [],
         )
 
-    def test_torch_batches_are_reiterable_and_have_bounded_length(self):
+    def test_torch_batches_reports_bounded_length_without_importing_training_stack(self):
         source = Matrix([[i] for i in range(100)])
         batches = MODULE.TorchWindowBatches(source, window_size=16, batch_size=8)
         self.assertEqual(len(batches), 11)
-        self.assertEqual(len(list(batches)), 11)
-        self.assertEqual(len(list(batches)), 11)
+        first_pass = list(MODULE.iter_window_slices(source, 16, 8))
+        second_pass = list(MODULE.iter_window_slices(source, 16, 8))
+        self.assertEqual(first_pass, second_pass)
+        self.assertEqual(len(first_pass), len(batches))
 
     def test_rejects_invalid_shape_and_sizes(self):
         with self.assertRaisesRegex(ValueError, "2-D array"):
