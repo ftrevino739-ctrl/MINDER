@@ -1,0 +1,22 @@
+{
+  "manifest_version": 1,
+  "assets": [
+    {
+      "asset_id": "replace-with-unique-asset-id",
+      "asset_type": "audio_background | precomputed_features | validation_features | room_impulse_response | voice_model",
+      "source_url": "https://replace-with-canonical-source",
+      "source_revision": "replace-with-immutable-dataset-revision-or-version",
+      "relative_path": "relative/path/inside/asset-root.bin",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "license_id": "replace-with-exact-license-identifier",
+      "attribution": "Replace with exact attribution text, or explicitly state Not required and why.",
+      "restrictions": [
+        "Replace with all recorded restrictions; do not infer them."
+      ],
+      "review_status": "pending",
+      "reviewed_by": "",
+      "reviewed_at": "",
+      "approved_uses": []
+    }
+  ]
+}
