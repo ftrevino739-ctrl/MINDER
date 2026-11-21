@@ -113,6 +113,39 @@ class PipelineInterruptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(engine._gen)
         await engine.close()
 
+    async def test_interrupted_batch_with_skipped_tool_responses_does_not_restart(self):
+        engine = PipelineEngine(BlockingLLM())
+        engine._bind_loop()
+        engine._awaiting["started-call"] = "save_memory"
+        engine._awaiting["skipped-call"] = "shutdown_jarvis"
+
+        # Both IDs belong to the model's emitted batch. The first operation
+        # had already been dispatched; the second is returned as not executed.
+        # Neither response may revive the interrupted generation.
+        engine._interrupt_on_loop()
+        self.assertEqual(
+            engine._interrupted_tool_ids,
+            {"started-call", "skipped-call"},
+        )
+
+        await engine.send_tool_response(function_responses=[
+            SimpleNamespace(
+                id="started-call",
+                name="save_memory",
+                response={"result": "saved"},
+            ),
+            SimpleNamespace(
+                id="skipped-call",
+                name="shutdown_jarvis",
+                response={"error": "Not executed: interrupted before dispatch."},
+            ),
+        ])
+
+        self.assertFalse(engine._awaiting)
+        self.assertFalse(engine._interrupted_tool_ids)
+        self.assertIsNone(engine._gen)
+        await engine.close()
+
     async def test_late_interrupted_tool_result_does_not_cancel_a_new_user_turn(self):
         engine = PipelineEngine(BlockingLLM())
         engine._bind_loop()
