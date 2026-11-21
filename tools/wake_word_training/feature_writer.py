@@ -96,6 +96,12 @@ def write_features_from_generator(
                 raise FeatureWriterError(
                     "Augmentation generator must yield non-empty 2-D PCM batches."
                 )
+            if pcm_shape[1] != clip_duration_samples:
+                raise FeatureWriterError(
+                    f"PCM batch length must be {clip_duration_samples} samples; got {pcm_shape[1]}."
+                )
+            if str(getattr(audio_batch, "dtype", "")) != "int16":
+                raise FeatureWriterError("Augmentation batches must contain signed int16 PCM.")
 
             batch_count = int(pcm_shape[0])
             if rows_written + batch_count > total_samples:
