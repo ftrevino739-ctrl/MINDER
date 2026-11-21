@@ -17,6 +17,7 @@ import statistics
 import subprocess
 import sys
 import wave
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -534,3 +535,88 @@ def execute_feature_preparation(
             raise
         raise FeaturePreparationError(f"Feature preparation failed: {exc}") from exc
 
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    """Load the explicit MINDER YAML config without mutating it."""
+    try:
+        import yaml
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise FeaturePreparationError(f"Cannot load MINDER training YAML: {exc}") from exc
+    if not isinstance(config, dict):
+        raise FeaturePreparationError("MINDER training YAML must contain a mapping.")
+    return config
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--training-root", type=Path, required=True)
+    parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--asset-manifest", type=Path, required=True)
+    for split, _, _ in _SPLITS:
+        option = split.replace("_", "-")
+        parser.add_argument(f"--{option}-corpus-manifest", type=Path, required=True)
+        parser.add_argument(f"--{option}-corpus-asset-id", required=True)
+    parser.add_argument("--seed", type=int, default=20261121)
+    parser.add_argument("--execute", action="store_true",
+                        help="Perform CPU/disk-intensive augmentation and feature extraction.")
+    parser.add_argument("--confirm-heavy-preparation", action="store_true",
+                        help="Required together with --execute.")
+    args = parser.parse_args(argv)
+
+    if args.execute and not args.confirm_heavy_preparation:
+        parser.error("--execute requires --confirm-heavy-preparation.")
+    if args.confirm_heavy_preparation and not args.execute:
+        parser.error("--confirm-heavy-preparation only applies with --execute.")
+
+    corpus_manifests = {
+        split: getattr(args, f"{split}_corpus_manifest")
+        for split, _, _ in _SPLITS
+    }
+    corpus_asset_ids = {
+        split: getattr(args, f"{split}_corpus_asset_id")
+        for split, _, _ in _SPLITS
+    }
+
+    try:
+        config = _load_yaml(args.config.expanduser().resolve())
+        bundle = validate_feature_preparation_workspace(
+            config,
+            args.training_root,
+            args.asset_root,
+            args.asset_manifest,
+            corpus_manifests,
+            corpus_asset_ids,
+            seed=args.seed,
+        )
+        print("MINDER feature-preparation preflight PASSED.")
+        print(f"Reviewed source asset IDs: {len(bundle.source_asset_ids)}")
+        print(f"Feature clip length: {bundle.clip_duration_samples} samples.")
+        for split, path in bundle.output_paths.items():
+            print(f"  {split}: {path}")
+        print(
+            f"RIR files: {len(bundle.room_impulse_responses)}; "
+            f"background entries: {len(bundle.background_clips)}"
+        )
+
+        if not args.execute:
+            print("Read-only mode: no augmentation or feature extraction was started.")
+            return 0
+
+        outputs, proposal = execute_feature_preparation(
+            config,
+            bundle,
+            seed=args.seed,
+        )
+        print("Feature extraction completed.")
+        print(f"Pending asset proposal (NOT approved): {proposal}")
+        print("Review source licenses and proposed provenance before merging records into asset_manifest.json.")
+        return 0
+    except FeaturePreparationError as exc:
+        print(f"MINDER feature-preparation FAILED: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
