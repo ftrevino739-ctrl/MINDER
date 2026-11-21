@@ -23,6 +23,8 @@ This checklist validates the real microphone → STT → selected LLM → TTS �
    - the selected TTS voice is audible through the selected output device.
 3. Repeat once with a different short Spanish sentence to rule out a lucky transcription.
 4. While MINDER is speaking, press the interrupt control or the Escape key. Verify playback stops promptly and a later turn can still complete.
+   - In Pipeline mode, this is an explicit user-triggered interrupt: it cancels the in-flight LLM/TTS task on the provider's asyncio loop and emits a turn-complete event so the receive loop resumes listening. It is not automatic barge-in; speaking over the assistant without pressing the control is not yet a supported interruption trigger.
+   - A tool or desktop action already dispatched before interruption is not cancelled by this control. Verify its confirmation/safety gate still governs any external side effect.
 5. Leave the microphone silent for several seconds. Verify MINDER does not invent a transcript or start an unintended turn.
 6. Close and relaunch MINDER, then repeat one short PTT turn to verify the selected provider/device settings persist.
 
