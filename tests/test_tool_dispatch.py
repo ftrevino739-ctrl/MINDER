@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import unittest
 from types import SimpleNamespace
 
@@ -94,6 +95,60 @@ class ToolDispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["id"] for item in responses], ["1", "2"])
         self.assertTrue(all("Not executed" in item["response"]["error"]
                             for item in responses))
+
+
+    async def test_interrupt_from_ui_thread_is_seen_by_the_dispatch_gate(self):
+        calls = self._calls(("1", "save_memory"), ("2", "open_app"))
+        dispatch_lock = threading.Lock()
+        state = {"interrupted": False}
+        first_started = threading.Event()
+        release_first = threading.Event()
+        executed = []
+
+        def is_interrupted():
+            with dispatch_lock:
+                return state["interrupted"]
+
+        def interrupt_from_ui_thread():
+            first_started.wait(timeout=2.0)
+            with dispatch_lock:
+                state["interrupted"] = True
+            release_first.set()
+
+        async def execute(call):
+            executed.append(call.id)
+            if call.id == "1":
+                first_started.set()
+                await asyncio.get_running_loop().run_in_executor(
+                    None, release_first.wait
+                )
+            return {"id": call.id, "result": "completed"}
+
+        worker = threading.Thread(
+            target=interrupt_from_ui_thread,
+            name="minder-test-ui-interrupt",
+            daemon=True,
+        )
+        worker.start()
+        try:
+            responses = await asyncio.wait_for(
+                dispatch_function_calls(
+                    calls,
+                    execute,
+                    is_interrupted=is_interrupted,
+                    response_factory=self._response,
+                ),
+                timeout=3.0,
+            )
+        finally:
+            release_first.set()
+            worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(executed, ["1"])
+        self.assertEqual(responses[0], {"id": "1", "result": "completed"})
+        self.assertEqual(responses[1]["id"], "2")
+        self.assertIn("Not executed", responses[1]["response"]["error"])
 
 
 if __name__ == "__main__":
