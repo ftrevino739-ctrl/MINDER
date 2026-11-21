@@ -12,6 +12,31 @@ import threading
 from typing import Any, Callable
 
 
+class MicrophoneQueue(asyncio.Queue):
+    """Bounded audio queue with one reserved slot for PTT control barriers.
+
+    Audio frames remain subject to the configured capacity. A turn-boundary
+    marker may occupy one temporary extra slot when the queue is full, so a
+    later microphone callback can never overtake the release boundary.
+    """
+
+    def put_barrier_nowait(self, marker: dict) -> None:
+        if not self.full():
+            self.put_nowait(marker)
+            return
+
+        # asyncio.Queue has no public "control item" API. Temporarily reserving
+        # one slot lets the marker enter at the correct FIFO position; restoring
+        # the limit immediately means subsequent PCM frames still backpressure
+        # against the original bound until the queue drains.
+        maxsize = self._maxsize
+        self._maxsize = maxsize + 1
+        try:
+            self.put_nowait(marker)
+        finally:
+            self._maxsize = maxsize
+
+
 def enqueue_microphone_frame(
     loop: asyncio.AbstractEventLoop,
     queue: asyncio.Queue,
@@ -74,12 +99,17 @@ def schedule_flush_barrier(
     marker = {"_flush_pipeline_turn": engine}
 
     def _insert_marker():
+        put_barrier = getattr(queue, "put_barrier_nowait", None)
+        if callable(put_barrier):
+            put_barrier(marker)
+            return
+
         try:
             queue.put_nowait(marker)
         except asyncio.QueueFull:
-            # A full queue already means new microphone callbacks cannot safely
-            # enqueue with put_nowait. Register the boundary as the first async
-            # put waiter so it survives backpressure.
+            # Compatibility for callers still using a plain asyncio.Queue.
+            # The application uses MicrophoneQueue so new frames cannot
+            # overtake its reserved control marker under backpressure.
             asyncio.create_task(queue.put(marker))
 
     loop.call_soon_threadsafe(_insert_marker)
