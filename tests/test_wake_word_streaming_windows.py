@@ -1,7 +1,10 @@
 """Regression tests for bounded wake-word false-positive validation windows."""
 import importlib.util
+import sys
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -57,6 +60,34 @@ class StreamingWindowTests(unittest.TestCase):
         second_pass = list(MODULE.iter_window_slices(source, 16, 8))
         self.assertEqual(first_pass, second_pass)
         self.assertEqual(len(first_pass), len(batches))
+
+    def test_torch_adapter_emits_writable_batch_values_and_restarts_each_pass(self):
+        source = Matrix([[i, i + 10] for i in range(7)])
+        batches = MODULE.TorchWindowBatches(source, window_size=3, batch_size=2)
+
+        # The app CI deliberately does not install the optional ML training
+        # stack. Lightweight stubs verify the adapter's batching contract.
+        numpy_stub = types.ModuleType("numpy")
+        numpy_stub.float32 = "float32"
+        numpy_stub.stack = lambda values: [list(value) for value in values]
+        numpy_stub.asarray = lambda values, dtype=None: list(values)
+        torch_stub = types.ModuleType("torch")
+        torch_stub.from_numpy = lambda value: value
+
+        with patch.dict(sys.modules, {"numpy": numpy_stub, "torch": torch_stub}):
+            first = list(batches)
+            second = list(batches)
+
+        self.assertEqual(first, second)
+        self.assertEqual([len(x) for x, _ in first], [2, 2])
+        self.assertEqual(
+            first[0][0],
+            [
+                [[0, 10], [1, 11], [2, 12]],
+                [[1, 11], [2, 12], [3, 13]],
+            ],
+        )
+        self.assertEqual([labels for _, labels in first], [[0.0, 0.0], [0.0, 0.0]])
 
     def test_rejects_invalid_shape_and_sizes(self):
         with self.assertRaisesRegex(ValueError, "2-D array"):
