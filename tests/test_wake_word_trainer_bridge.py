@@ -3,7 +3,9 @@ import hashlib
 import importlib.util
 import json
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from tools.wake_word_training import trainer_bridge as BRIDGE
@@ -297,6 +299,64 @@ class TrainerBridgeTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(BRIDGE.TrainingBridgeError, "shapes do not match"):
             BRIDGE.validate_feature_shapes(arrays)
+
+    def test_export_flow_loads_the_same_openwakeword_onnx_runtime_contract(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output_dir = Path(folder)
+
+            class TrainingModel:
+                def __init__(self):
+                    self.train_args = None
+                    self.export_args = None
+
+                def auto_train(self, **kwargs):
+                    self.train_args = kwargs
+                    return "best-model"
+
+                def export_model(self, **kwargs):
+                    self.export_args = kwargs
+                    (output_dir / "hey_minder.onnx").write_bytes(b"synthetic onnx test file")
+
+            class RuntimeModel:
+                def __init__(self, **kwargs):
+                    self.kwargs = kwargs
+
+                def predict(self, audio):
+                    return {"hey_minder": 0.0}
+
+            training_model = TrainingModel()
+            runtime_module = types.ModuleType("openwakeword.model")
+            runtime_module.Model = RuntimeModel
+            package_module = types.ModuleType("openwakeword")
+            package_module.__path__ = []
+
+            bundle = BRIDGE.TrainingBundle(
+                model=training_model,
+                training_loader=object(),
+                validation_loader=object(),
+                false_positive_loader=object(),
+                output_dir=output_dir,
+                output_path=output_dir / "hey_minder.onnx",
+                config={
+                    "steps": 50000,
+                    "max_negative_weight": 1500,
+                    "target_false_positives_per_hour": 0.2,
+                },
+            )
+            numpy_stub = types.SimpleNamespace(
+                int16="int16",
+                zeros=lambda count, dtype=None: (count, dtype),
+            )
+            with patch.dict(
+                "sys.modules",
+                {"openwakeword": package_module, "openwakeword.model": runtime_module},
+            ):
+                result = BRIDGE.train_and_export(bundle, np_module=numpy_stub)
+
+            self.assertEqual(result, output_dir / "hey_minder.onnx")
+            self.assertEqual(training_model.train_args["steps"], 50000)
+            self.assertEqual(training_model.export_args["model"], "best-model")
+            self.assertTrue((output_dir / "hey_minder.onnx").is_file())
 
     def test_build_bundle_uses_zero_workers_and_reiterable_mmap_stream(self):
         with tempfile.TemporaryDirectory() as folder:
