@@ -193,3 +193,39 @@ positive clip triggered and the measured negative rate was <= 0.2/hour; it is
 only a preliminary dataset gate, not proof of real-world performance. Include
 multiple real speakers and held-out room/background recordings before
 accepting the model.
+
+
+## Windows-port building block — bounded validation windows
+
+The first MINDER-owned Windows-port component is now in
+`streaming_windows.py`. It reproduces the pinned upstream validator's
+stride-1 window order and count, but emits a maximum of 8,192 windows at a
+time. `TorchWindowBatches` is re-iterable, so each auto-training validation
+pass receives the complete 11.3-hour stream again. It also stacks each
+batch into a writable contiguous NumPy array before creating tensors, avoiding
+the read-only overlapping-array wrapper used in the external candidate.
+
+Illustrative integration after the feature file has been prepared:
+
+```python
+import numpy as np
+from tools.wake_word_training.streaming_windows import TorchWindowBatches
+
+false_positive_features = np.load(
+    config["false_positive_validation_data_path"],
+    mmap_mode="r",
+    allow_pickle=False,
+)
+false_positive_batches = TorchWindowBatches(
+    false_positive_features,
+    window_size=input_shape[0],
+    batch_size=8192,
+)
+```
+
+This helper has unit coverage for upstream-equivalent window count/order,
+partial batches, invalid input, repeated passes and the tensor-adapter
+contract using lightweight test doubles. It is not yet wired into an approved
+full training command; the community trainer remains unapproved until its
+data downloader, config mapping, voice coverage and end-to-end training
+behavior are independently validated.
