@@ -10,7 +10,9 @@ class BlockingLLM:
     caps = {"tools": False, "vision": False, "tool_format": None}
 
     async def chat(self, messages, tools=None, *, stream=True):
-        yield {"text": "I am speaking right now. "}
+        # Provide enough trailing content for the streaming reasoning filter
+        # to release the first complete sentence to TTS.
+        yield {"text": "I am speaking right now. Here is more streamed text."}
         await asyncio.Event().wait()
 
 
