@@ -99,9 +99,10 @@ DEFAULT_CAPS: dict[str, Any] = {
     # pipeline engine is what gives it a voice.
     "audio_out": False,
 
-    # Can the user talk over it and have it stop? Live does this server-side. A
-    # local pipeline has to detect it, and until it does, `interrupt()` can only
-    # stop playback rather than the generation behind it.
+    # Does the engine automatically detect microphone speech over playback?
+    # Only Live does that server-side. The local pipeline supports an explicit
+    # UI/keyboard interrupt that cancels playback AND generation, but automatic
+    # speech detection is not implemented, so this capability remains false.
     "barge_in": False,
 
     # Does it honour NON_BLOCKING tool behaviour + scheduling (see
