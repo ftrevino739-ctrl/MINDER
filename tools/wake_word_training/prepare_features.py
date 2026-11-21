@@ -164,6 +164,7 @@ def _corpus_registration(
     corpus_manifest_path: Path,
     corpus_asset_id: str,
     expected_count: int,
+    expected_texts: list[str],
     asset_root: Path,
     asset_manifest_path: Path,
     asset_index: Mapping[str, Mapping[str, Any]],
@@ -200,6 +201,16 @@ def _corpus_registration(
     if len(entries) != expected_count:
         raise FeaturePreparationError(
             f"{split} corpus has {len(entries)} WAV files; expected {expected_count}."
+        )
+    allowed_texts = {phrase.strip().casefold() for phrase in expected_texts}
+    unexpected_texts = sorted({
+        entry["text"].strip().casefold()
+        for entry in entries
+        if entry["text"].strip().casefold() not in allowed_texts
+    })
+    if unexpected_texts:
+        raise FeaturePreparationError(
+            f"{split} corpus contains phrases outside its configured text set: {unexpected_texts[:5]}"
         )
 
     corpus_data = _read_mapping(manifest_path, f"{split} corpus manifest")
@@ -298,6 +309,7 @@ def validate_feature_preparation_workspace(
             corpus_manifest_path=corpus_manifests[split],
             corpus_asset_id=corpus_asset_ids[split],
             expected_count=expected_count,
+            expected_texts=(["hey minder"] if split.startswith("positive") else list(config["custom_negative_phrases"])),
             asset_root=assets_root,
             asset_manifest_path=manifest_path,
             asset_index=asset_index,
