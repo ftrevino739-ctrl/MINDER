@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
+import statistics
 import subprocess
 import sys
 import wave
@@ -222,7 +224,7 @@ def _choose_clip_length(positive_test_paths: list[Path], seed: int) -> int:
         except (OSError, wave.Error) as exc:
             raise FeaturePreparationError(f"Cannot inspect positive validation WAV {selected}: {exc}") from exc
 
-    total = int(round(sorted(durations)[len(durations) // 2] / 1000) * 1000) + 12000
+    total = int(round(statistics.median(durations) / 1000) * 1000) + 12000
     if total < 32000 or abs(total - 32000) <= 4000:
         total = 32000
     return total
@@ -271,9 +273,17 @@ def validate_feature_preparation_workspace(
     except ManifestError as exc:
         raise FeaturePreparationError(f"Training asset manifest rejected: {exc}") from exc
     asset_index = _load_asset_index(manifest_path)
+    if not isinstance(config.get("rir_paths"), list) or not config["rir_paths"]:
+        raise FeaturePreparationError("rir_paths must be a non-empty list.")
+    if not isinstance(config.get("background_paths"), list) or not config["background_paths"]:
+        raise FeaturePreparationError("background_paths must be a non-empty list.")
+    rates = config.get("background_paths_duplication_rate")
+    if not isinstance(rates, list) or len(rates) != len(config["background_paths"]):
+        raise FeaturePreparationError("background_paths_duplication_rate must match background_paths.")
+    if any(not isinstance(rate, int) or isinstance(rate, bool) or not 1 <= rate <= 20 for rate in rates):
+        raise FeaturePreparationError("Background duplication rates must be integers between 1 and 20.")
 
-    corpora: dict[str, list[Path]] = {}
-    source_asset_ids: list[str] = []
+    corpora: dict[str, list[Path]] = {}    source_asset_ids: list[str] = []
     for split, _, count_key in _SPLITS:
         expected_count = int(config[count_key])
         paths, corpus_ids = _corpus_registration(
@@ -309,8 +319,19 @@ def validate_feature_preparation_workspace(
 
     output_dir = resolve_training_path(root, config["output_dir"])
     feature_dir = output_dir / config["model_name"]
-    if not output_dir.parent.is_dir():
-        raise FeaturePreparationError(f"Feature output parent directory does not exist: {output_dir.parent}")
+    nearest_existing = output_dir
+    while not nearest_existing.exists() and nearest_existing != nearest_existing.parent:
+        nearest_existing = nearest_existing.parent
+    if not nearest_existing.is_dir() or not os.access(nearest_existing, os.W_OK):
+        raise FeaturePreparationError(
+            f"No writable existing directory is available for feature output: {nearest_existing}"
+        )
+    _relative_posix(feature_dir, assets_root, "Feature output directory")
+    proposal_path = feature_dir / "feature_asset_proposals.pending.json"
+    if proposal_path.exists():
+        raise FeaturePreparationError(
+            f"Pending feature proposal already exists: {proposal_path}; review or archive it first."
+        )
     output_paths = {
         file_key: feature_dir / f"{file_key}.npy"
         for _, file_key, _ in _SPLITS
