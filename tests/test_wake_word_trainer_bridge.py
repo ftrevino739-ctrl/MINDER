@@ -168,13 +168,13 @@ class TrainerBridgeTests(unittest.TestCase):
                 self.returncode = returncode
 
         with patch.object(BRIDGE.subprocess, "run",
-                          return_value=Result(BRIDGE.PINNED_OPENWAKEWORD_COMMIT + "\\n")):
+                          return_value=Result(BRIDGE.PINNED_OPENWAKEWORD_COMMIT + "\n")):
             self.assertEqual(
                 BRIDGE.verify_pinned_openwakeword_checkout(Path(".")),
                 BRIDGE.PINNED_OPENWAKEWORD_COMMIT,
             )
         with patch.object(BRIDGE.subprocess, "run",
-                          return_value=Result("deadbeef\\n")):
+                          return_value=Result("deadbeef\n")):
             with self.assertRaisesRegex(BRIDGE.TrainingBridgeError, "only supports the reviewed"):
                 BRIDGE.verify_pinned_openwakeword_checkout(Path("."))
 
