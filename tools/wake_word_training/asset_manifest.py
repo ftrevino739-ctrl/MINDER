@@ -44,6 +44,8 @@ def _is_nonempty_text(value: Any) -> bool:
 
 
 def _safe_asset_path(asset_root: Path, relative_path: str) -> Path:
+    if "\\\\" in relative_path or ":" in relative_path:
+        raise ManifestError(f"Asset path must use a relative POSIX path: {relative_path!r}")
     candidate = Path(relative_path)
     if candidate.is_absolute() or candidate.drive or not candidate.parts:
         raise ManifestError(f"Asset path must be relative: {relative_path!r}")
@@ -77,7 +79,9 @@ def validate_manifest(
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ManifestError(f"Cannot read JSON manifest: {exc}") from exc
 
-    if not isinstance(payload, dict) or payload.get("manifest_version") != 1:
+    if (not isinstance(payload, dict)
+            or isinstance(payload.get("manifest_version"), bool)
+            or payload.get("manifest_version") != 1):
         raise ManifestError("manifest_version must be exactly 1")
     assets = payload.get("assets")
     if not isinstance(assets, list) or not assets:
