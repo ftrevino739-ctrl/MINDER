@@ -22,6 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+# Direct `python tools/wake_word_training/prepare_features.py` execution puts
+# this script's directory, not the repository root, at sys.path[0]. Add the
+# root explicitly so the same package imports work in CLI and unit-test modes.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from tools.wake_word_training.trainer_bridge import (
     PINNED_OPENWAKEWORD_COMMIT,
     TrainingBridgeError,
