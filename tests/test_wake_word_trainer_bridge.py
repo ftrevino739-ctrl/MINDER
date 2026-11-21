@@ -352,6 +352,8 @@ class TrainerBridgeTests(unittest.TestCase):
             second = iter(bundle.training_loader.dataset)
             self.assertTrue(hasattr(first, "__next__"))
             self.assertTrue(hasattr(second, "__next__"))
+            next(first)
+            next(second)
             self.assertEqual(len(mmap_calls), 2)
             self.assertEqual(
                 set(mmap_calls[0][0]),
