@@ -92,7 +92,7 @@ def verify_pinned_openwakeword_checkout(training_root: Path) -> str:
     if actual != PINNED_OPENWAKEWORD_COMMIT:
         raise TrainingBridgeError(
             "The Windows trainer bridge only supports the reviewed openWakeWord "
-            f"commit {PINNED_OPENWAKEWORD_COMMIT}; found {actual or \"unknown\"}."
+            f"commit {PINNED_OPENWAKEWORD_COMMIT}; found {actual or 'unknown'}."
         )
     return actual
 
