@@ -4,9 +4,21 @@ model_name: "hey_minder"
 target_phrase:
   - "hey minder"
 custom_negative_phrases:
+  # English near-misses / confusables.
   - "hey reminder"
   - "hey mentor"
   - "hey render"
+  # Manually curated Spanish/Mexican-Spanish hard negatives. The pinned
+  # upstream phoneme-overlap generator is English/CMUdict-only, so keep
+  # these explicit phrases in the MINDER corpus.
+  - "hey mira"
+  - "hey miren"
+  - "oye mira"
+  - "hoy me enteré"
+  - "hey minero"
+  - "hey Miguel"
+  - "hey mini"
+  - "hay menos"
 
 # Minimum recommended positive coverage; increase toward 100k for production quality.
 n_samples: 20000
