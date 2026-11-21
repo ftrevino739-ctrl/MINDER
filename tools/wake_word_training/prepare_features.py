@@ -83,11 +83,18 @@ def _load_asset_index(manifest_path: Path) -> dict[str, dict[str, Any]]:
     assets = payload.get("assets")
     if not isinstance(assets, list):
         raise FeaturePreparationError("Training asset manifest must contain an assets list.")
-    return {
-        entry["asset_id"]: entry
-        for entry in assets
-        if isinstance(entry, dict) and isinstance(entry.get("asset_id"), str)
-    }
+    index: dict[str, dict[str, Any]] = {}
+    seen_paths: set[str] = set()
+    for entry in assets:
+        if not isinstance(entry, dict) or not isinstance(entry.get("asset_id"), str):
+            continue
+        relative_path = entry.get("relative_path")
+        if isinstance(relative_path, str):
+            if relative_path in seen_paths:
+                raise FeaturePreparationError(f"Duplicate asset relative_path in manifest: {relative_path}")
+            seen_paths.add(relative_path)
+        index[entry["asset_id"]] = entry
+    return index
 
 
 def _relative_posix(path: Path, root: Path, description: str) -> str:
