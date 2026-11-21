@@ -326,6 +326,17 @@ class TrainerBridgeTests(unittest.TestCase):
             with self.assertRaisesRegex(BRIDGE.TrainingBridgeError, "manifest rejected"):
                 BRIDGE.validate_training_workspace(config, root, manifest)
 
+    def test_feature_shape_gate_rejects_non_float32_arrays(self):
+        arrays = {
+            "positive_features_train": FakeArray((10, 16, 96), dtype="float64"),
+            "negative_features_train": FakeArray((10, 16, 96)),
+            "positive_features_test": FakeArray((2, 16, 96)),
+            "negative_features_test": FakeArray((2, 16, 96)),
+            "false_positive_validation": FakeArray((100, 96)),
+        }
+        with self.assertRaisesRegex(BRIDGE.TrainingBridgeError, "float32"):
+            BRIDGE.validate_feature_shapes(arrays)
+
     def test_feature_shape_gate_rejects_mismatched_test_arrays(self):
         arrays = {
             "positive_features_train": FakeArray((10, 16, 96)),
