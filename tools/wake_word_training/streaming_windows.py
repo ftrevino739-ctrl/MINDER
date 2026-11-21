@@ -84,6 +84,6 @@ class TorchWindowBatches:
         ):
             # Materialize only this bounded batch. This avoids wrapping a
             # non-writable, overlapping NumPy view with torch.from_numpy().
-            batch_features = np.stack(windows).astype(np.float32, copy=False)
+            batch_features = np.asarray(np.stack(windows), dtype=np.float32)
             batch_labels = np.asarray(labels, dtype=np.float32)
             yield torch.from_numpy(batch_features), torch.from_numpy(batch_labels)
