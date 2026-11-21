@@ -204,6 +204,9 @@ class TrainerBridgeTests(unittest.TestCase):
             def __iter__(self):
                 return iter(self.rows)
 
+            def __getitem__(self, item):
+                return self.rows[item]
+
         class Batch:
             def __init__(self, items):
                 self.items = items
