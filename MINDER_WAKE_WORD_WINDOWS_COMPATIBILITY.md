@@ -143,3 +143,20 @@ This is a technical provenance and license-screening record, not legal advice. N
 Required engineering change before any dataset-fetcher approval: produce a machine-readable manifest for every selected asset containing source URL/revision, SHA-256, exact license identifier, author/attribution text where required, any restrictions/permissions recorded, and local output files derived from it. FMA ingestion must join each MP3 to the FMA metadata record and reject tracks without an individually reviewed allow-listed license. AudioSet needs explicit source and license review. The CC BY-NC-SA openWakeWord feature dataset needs a separate decision for the trained-model distribution. No source with unresolved rights may silently enter training.
 
 Sources: [openWakeWord feature dataset card](https://huggingface.co/datasets/davidscripka/openwakeword_features), [FMA dataset README and audio-copyright notice](https://github.com/mdeff/fma), [FMA license guidance](https://freemusicarchive.org/FAQ/), [AudioSet mirror dataset card](https://huggingface.co/datasets/agkphysics/AudioSet), [Piper Mexican Spanish Ald model card](https://huggingface.co/rhasspy/piper-voices/blob/main/es/es_MX/ald/medium/MODEL_CARD), [Piper Mexican Spanish Claude model card](https://huggingface.co/rhasspy/piper-voices/blob/main/es/es_MX/claude/high/MODEL_CARD).
+
+### MINDER-owned asset manifest gate
+
+To turn the licensing findings into an enforceable engineering process,
+MINDER now has `tools/wake_word_training/asset_manifest.py` and the
+`asset_manifest.example.json` template. Validation requires a human-approved
+record for each asset, including canonical HTTPS source, source revision,
+exact license identifier, attribution, restrictions, reviewer/date,
+explicit `model_training` permission, relative in-root file path and matching
+SHA-256. The validator streams hashes in 1 MiB chunks and rejects path
+traversal, duplicate asset IDs and pending/blocked reviews.
+
+This check records the maintainer's review; it does not interpret license
+text, verify the reviewer's legal conclusion or decide whether a model is
+derivative. It is not yet wired into a complete Windows training command.
+Do not download, mark approved or train on any candidate asset until the
+source-specific review and provenance manifest are complete.
