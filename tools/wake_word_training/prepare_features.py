@@ -422,14 +422,21 @@ def _make_pending_feature_proposals(
         raise FeaturePreparationError(
             f"Refusing to replace existing feature proposal file: {proposal_path}"
         )
-    proposal_path.write_text(
-        json.dumps({
-            "proposal_schema_version": 1,
-            "note": "PENDING human review. These are not approved asset records.",
-            "assets": records,
-        }, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    temporary = proposal_path.with_name(f".{proposal_path.name}.{uuid.uuid4().hex}.partial")
+    try:
+        temporary.write_text(
+            json.dumps({
+                "proposal_schema_version": 1,
+                "note": "PENDING human review. These are not approved asset records.",
+                "assets": records,
+            }, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.link(temporary, proposal_path)
+    except OSError as exc:
+        raise FeaturePreparationError(f"Could not publish pending feature proposals safely: {exc}") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
     return proposal_path
 
 
@@ -462,6 +469,7 @@ def execute_feature_preparation(
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
+    created_outputs: list[Path] = []
     try:
         bundle.feature_dir.mkdir(parents=True, exist_ok=True)
         audio_features = AudioFeatures(device="cpu")
@@ -483,84 +491,18 @@ def execute_feature_preparation(
                 audio_features=audio_features,
                 output_path=bundle.output_paths[filename],
             )
+            created_outputs.append(bundle.output_paths[filename])
 
         revision = current_minder_source_revision()
         proposal_path = _make_pending_feature_proposals(bundle, revision)
         return bundle.output_paths, proposal_path
-    except (FeatureWriterError, OSError, RuntimeError, ValueError) as exc:
+    except Exception as exc:
+        for output_path in created_outputs:
+            try:
+                output_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if isinstance(exc, FeaturePreparationError):
+            raise
         raise FeaturePreparationError(f"Feature preparation failed: {exc}") from exc
 
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    try:
-        import yaml
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise FeaturePreparationError(f"Cannot load MINDER training YAML: {exc}") from exc
-    if not isinstance(config, dict):
-        raise FeaturePreparationError("MINDER training YAML must contain a mapping.")
-    return config
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--training-root", type=Path, required=True)
-    parser.add_argument("--asset-root", type=Path, required=True)
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--asset-manifest", type=Path, required=True)
-    for split, _, _ in _SPLITS:
-        parser.add_argument(f"--{split.replace('_', '-')}-corpus-manifest", type=Path, required=True)
-        parser.add_argument(f"--{split.replace('_', '-')}-corpus-asset-id", required=True)
-    parser.add_argument("--seed", type=int, default=20261121)
-    parser.add_argument("--execute", action="store_true",
-                        help="Perform augmentation and feature extraction instead of a read-only check.")
-    parser.add_argument("--confirm-heavy-preparation", action="store_true",
-                        help="Required with --execute because this stage performs CPU/disk-intensive work.")
-    args = parser.parse_args(argv)
-
-    if args.execute and not args.confirm_heavy_preparation:
-        parser.error("--execute requires --confirm-heavy-preparation.")
-    if args.confirm_heavy_preparation and not args.execute:
-        parser.error("--confirm-heavy-preparation only applies with --execute.")
-
-    corpora = {
-        split: getattr(args, f"{split}_corpus_manifest")
-        for split, _, _ in _SPLITS
-    }
-    corpus_ids = {
-        split: getattr(args, f"{split}_corpus_asset_id")
-        for split, _, _ in _SPLITS
-    }
-    try:
-        config = _load_yaml(args.config.expanduser().resolve())
-        bundle = validate_feature_preparation_workspace(
-            config,
-            args.training_root,
-            args.asset_root,
-            args.asset_manifest,
-            corpora,
-            corpus_ids,
-            seed=args.seed,
-        )
-        print("MINDER feature-preparation preflight PASSED.")
-        print(f"Reviewed source assets: {len(bundle.source_asset_ids)}")
-        print(f"Feature clip length: {bundle.clip_duration_samples} samples.")
-        for split, path in bundle.output_paths.items():
-            print(f"  {split}: {path}")
-        print(f"RIR files: {len(bundle.room_impulse_responses)}; background entries: {len(bundle.background_clips)}")
-        if not args.execute:
-            print("Read-only mode: no augmentation or feature extraction was started.")
-            return 0
-
-        outputs, proposal = execute_feature_preparation(config, bundle, seed=args.seed)
-        print("Feature extraction completed.")
-        print(f"Pending asset records (NOT approved): {proposal}")
-        print("Review the source licenses and proposal records before adding them to asset_manifest.json.")
-        return 0
-    except FeaturePreparationError as exc:
-        print(f"MINDER feature-preparation FAILED: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
