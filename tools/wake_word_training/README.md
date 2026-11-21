@@ -336,3 +336,54 @@ python tools/wake_word_training/trainer_bridge.py `
 The two confirmation flags are both required. The current assistant has not run this command, installed a training stack or downloaded the datasets. The bridge is code-reviewed and CI-tested, but the actual model-training stage and exported-model smoke test have not yet been exercised with real model assets on the target Windows 11 PC.
 
 Important: this is not yet a complete data-preparation pipeline. The feature-generation stage still needs an approved voice pool (including genuine Mexican-Spanish pronunciation coverage), a safe augmentation workflow and source-specific licensing/provenance records. Do not infer that a passing bridge dry run means those earlier stages have been completed.
+
+## Windows-safe feature materialization
+
+The next pipeline component is now available as `feature_writer.py`. It
+accepts an iterator of augmented PCM batches and an openWakeWord
+`AudioFeatures` instance, then writes features directly into an exact-size
+NumPy memory map. It does not build a full feature matrix in RAM and does not
+call the upstream `trim_mmap` routine that attempts to delete/rename a mapped
+file while Windows may still hold it open.
+
+The writer verifies the declared row count and every embedded batch shape.
+It flushes and closes the mapping before publishing the completed file with a
+same-directory atomic replace. Existing outputs are refused by default;
+replacing one requires `overwrite=True`. A failed or incomplete generation
+keeps the previous output intact and removes the partial file.
+
+Example integration once the clip list, augmentations and their source
+manifest have been prepared:
+
+```python
+from pathlib import Path
+
+from openwakeword.data import augment_clips
+from openwakeword.utils import AudioFeatures
+from tools.wake_word_training.feature_writer import write_features_from_generator
+
+paths_for_this_split = positive_train_wav_paths
+rounds = config["augmentation_rounds"]
+augmented = augment_clips(
+    paths_for_this_split * rounds,
+    total_length=clip_length_samples,
+    batch_size=config["augmentation_batch_size"],
+    background_clip_paths=approved_background_paths,
+    RIR_paths=approved_rir_paths,
+)
+writer = AudioFeatures(device="cpu")
+write_features_from_generator(
+    augmented,
+    total_samples=len(paths_for_this_split) * rounds,
+    clip_duration_samples=clip_length_samples,
+    audio_features=writer,
+    output_path=Path("artifacts/hey_minder/hey_minder/positive_features_train.npy"),
+)
+```
+
+The writer itself is implemented and unit-tested with synthetic batches. The
+complete corpus-generation/augmentation stage is still not wired to the CLI:
+MINDER must first finish an approved multi-voice generator and source manifest
+(including Mexican-Spanish coverage, RIR and background rights). The bridge
+therefore still requires precomputed feature files and will not create or
+download them automatically.
