@@ -113,6 +113,30 @@ class PipelineInterruptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(engine._gen)
         await engine.close()
 
+    async def test_late_interrupted_tool_result_does_not_cancel_a_new_user_turn(self):
+        engine = PipelineEngine(BlockingLLM())
+        engine._bind_loop()
+        engine._awaiting["old-call"] = "open_app"
+        engine._pending_sigs["old-call"] = "open_app:{}"
+        engine._interrupt_on_loop()
+        self.assertFalse(engine._awaiting)
+
+        await engine.send_client_content(
+            turns={"role": "user", "parts": [{"text": "A new request after interrupt."}]}
+        )
+        new_generation = engine._gen
+        self.assertIsNotNone(new_generation)
+
+        await engine.send_tool_response(function_responses=[
+            SimpleNamespace(id="old-call", name="open_app", response={"result": "opened"}),
+        ])
+
+        self.assertIs(engine._gen, new_generation)
+        self.assertNotIn("open_app:{}", engine._done_calls)
+        self.assertFalse(new_generation.done())
+        await engine.close()
+        await asyncio.sleep(0)
+
     async def test_normal_tool_result_still_starts_followup_generation(self):
         engine = PipelineEngine(BlockingLLM())
         engine._bind_loop()
