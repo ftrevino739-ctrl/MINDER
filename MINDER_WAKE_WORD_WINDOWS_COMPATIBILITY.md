@@ -162,3 +162,43 @@ Do not download, mark approved or train on any candidate asset until the
 source-specific review and provenance manifest are complete.
 
 The manifest schema also records `derived_from` asset IDs. Original sources use an empty list; generated WAVs, embeddings or other derivatives must reference their inputs. Validation rejects unknown source IDs, self-references and provenance cycles, so a derived training file cannot silently lose its source lineage.
+
+ 
+### MINDER-owned model-fitting bridge (2026-11-21)
+
+MINDER now has a first-party model-fitting bridge in
+`tools/wake_word_training/trainer_bridge.py`. This does not adopt or invoke
+the community repository's training script or downloader. It uses the pinned
+openWakeWord `Model` and `mmap_batch_generator` library functions, with a
+MINDER-owned data orchestration layer:
+
+- It checks that the training checkout is exactly
+  `368c03716d1e92591906a84949bc477f3a834455`, the source revision used for
+  the static comparison.
+- It enforces the MINDER-specific phrase `hey minder`, the `hey_minder`
+  model key, existing sample-count profile, feature dimensions and asset
+  manifest coverage.
+- It opens the large negative feature arrays using read-only memory mapping.
+- It uses a re-iterable PyTorch `IterableDataset` with `num_workers=0`;
+  no multiprocessing workers or prefetch queue are created.
+- It uses the bounded, re-iterable false-positive window adapter, defaulting
+  to 1,024 windows per batch and capping the CLI setting at 4,096.
+- It exports to `<output_dir>/hey_minder.onnx`, loads that file through the
+  openWakeWord runtime, feeds one synthetic 80 ms silent PCM frame and checks
+  that the runtime reports the `hey_minder` output key.
+
+The bridge currently consumes already-prepared positive/negative train/test
+feature arrays, the ACAV100M external-negative array and the long false-
+positive validation feature array. It does not generate synthetic WAVs, run
+augmentation, fetch data or review a license. Every required feature file
+must be included in the human-reviewed manifest and hash-verified before
+training is allowed.
+
+The CLI is read-only by default. Actual training requires both
+`--execute` and `--confirm-heavy-training`. No command with those flags has
+been run, no ML training stack has been installed for the user, and no
+training dataset has been downloaded. This bridge completes only the model-
+fitting/export portion of the pipeline; the approved data-generation,
+augmentation and Mexican-Spanish voice-coverage stages remain open. It is
+not evidence that a trained model exists or that MINDER's wake phrase has
+passed real-speaker acceptance.
