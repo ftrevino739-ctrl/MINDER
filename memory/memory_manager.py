@@ -527,6 +527,28 @@ def save_session_summary(summary: str, language: str = "") -> None:
         _write_memory_file(memory)
     print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
 
+def consume_saved_session_entries(session_log: list[str],
+                                 saved_snapshot: list[str] | tuple[str, ...]) -> bool:
+    """Remove only the exact prefix that has already been persisted.
+
+    Session turns can be appended while a provider is generating a summary.
+    Comparing and deleting the captured prefix preserves those newer turns.
+    A mismatched prefix is left untouched rather than risking data loss.
+    """
+    if not isinstance(session_log, list):
+        return False
+    try:
+        snapshot = list(saved_snapshot)
+    except TypeError:
+        return False
+    if not snapshot or len(session_log) < len(snapshot):
+        return False
+    if session_log[:len(snapshot)] != snapshot:
+        return False
+    del session_log[:len(snapshot)]
+    return True
+
+
 def pop_last_session() -> dict | None:
     """
     Return AND remove the most recent session entry.

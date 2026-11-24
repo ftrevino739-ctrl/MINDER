@@ -111,6 +111,43 @@ class MemoryPersistenceTests(unittest.TestCase):
         self.assertIn("relationships/sister: Mi hermana vive cerca", result)
         self.assertNotIn("notes/family note:", result)
 
+    def test_saved_session_snapshot_consumes_only_saved_prefix(self):
+        session_log = ["User: first request", "MINDER: first answer"]
+        saved_snapshot = list(session_log)
+        session_log.extend(["User: newer request", "MINDER: newer answer"])
+
+        consumed = memory_manager.consume_saved_session_entries(
+            session_log, saved_snapshot,
+        )
+
+        self.assertTrue(consumed)
+        self.assertEqual(
+            session_log,
+            ["User: newer request", "MINDER: newer answer"],
+        )
+
+    def test_saved_session_snapshot_keeps_log_when_prefix_changed(self):
+        session_log = ["User: edited request", "MINDER: answer"]
+        saved_snapshot = ["User: original request", "MINDER: answer"]
+
+        consumed = memory_manager.consume_saved_session_entries(
+            session_log, saved_snapshot,
+        )
+
+        self.assertFalse(consumed)
+        self.assertEqual(
+            session_log,
+            ["User: edited request", "MINDER: answer"],
+        )
+
+    def test_saved_session_snapshot_does_not_consume_empty_snapshot(self):
+        session_log = ["User: request"]
+
+        consumed = memory_manager.consume_saved_session_entries(session_log, [])
+
+        self.assertFalse(consumed)
+        self.assertEqual(session_log, ["User: request"])
+
     def test_memory_search_limits_invalid_or_excessive_result_counts(self):
         for index in range(60):
             memory_manager.remember(f"project_{index}", "MINDER development", "projects")
