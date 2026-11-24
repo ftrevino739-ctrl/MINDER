@@ -527,6 +527,26 @@ def save_session_summary(summary: str, language: str = "") -> None:
         _write_memory_file(memory)
     print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
 
+def chunk_session_log(entries: list[str] | tuple[str, ...],
+                      max_entries: int = 40) -> list[list[str]]:
+    """Split a captured session log into ordered, non-overlapping batches.
+
+    Every entry appears exactly once. This lets the summarizer process long
+    sessions without silently omitting the older turns beyond its per-request
+    context budget.
+    """
+    if not isinstance(entries, (list, tuple)) or not entries:
+        return []
+    try:
+        size = max(1, min(int(max_entries), 100))
+    except (TypeError, ValueError, OverflowError):
+        size = 40
+    return [
+        list(entries[index:index + size])
+        for index in range(0, len(entries), size)
+    ]
+
+
 def consume_saved_session_entries(session_log: list[str],
                                  saved_snapshot: list[str] | tuple[str, ...]) -> bool:
     """Remove only the exact prefix that has already been persisted.

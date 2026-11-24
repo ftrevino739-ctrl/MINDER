@@ -54,6 +54,7 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, peek_last_session, consume_last_session,
     search_memory, set_trim_notifier, consume_saved_session_entries,
+    chunk_session_log,
 )
 
 # The file-backed tools (open_app, web_search, browser_control, …) are no longer
@@ -2209,18 +2210,41 @@ class JarvisLive:
                 ).strip()
                 lang = lang or "English"
 
-                convo = "\n".join(log_snapshot[-40:])  # cap provider input to last 40 turns
-                prompt = (
-                    f"Summarize this conversation in 1-2 sentences in {lang}. "
-                    "Focus on what the user accomplished or discussed. "
-                    "Output ONLY the summary text, nothing else:\n\n" + convo
-                )
-
+                batches = chunk_session_log(log_snapshot, max_entries=40)
+                rolling_summary = ""
                 from core import gemini
-                summary = await asyncio.to_thread(
-                    gemini.text, prompt, gemini.SMART, None, 30_000,
-                )
-                summary = str(summary or "").strip()
+
+                for batch_index, batch in enumerate(batches, start=1):
+                    convo = "\n".join(batch)
+                    prior = (
+                        "Earlier conversation summary (carry forward relevant goals, "
+                        "decisions and outcomes):\n" + rolling_summary + "\n\n"
+                        if rolling_summary else ""
+                    )
+                    prompt = (
+                        f"Create a concise cumulative summary in {lang}. "
+                        "Use 1-2 sentences. Preserve important user goals, decisions, "
+                        "project state and unresolved next steps. Do not invent facts. "
+                        "Incorporate the earlier summary and this new chronological "
+                        "batch, replacing the earlier summary with an updated one. "
+                        "Output ONLY the cumulative summary text.\n\n"
+                        + prior
+                        + f"Conversation batch {batch_index}/{len(batches)}:\n"
+                        + convo
+                    )
+                    generated = await asyncio.to_thread(
+                        gemini.text, prompt, gemini.SMART, None, 30_000,
+                    )
+                    generated = str(generated or "").strip()
+                    if not generated:
+                        print(
+                            "[Memory] ⚠️ Session summary returned no usable text; "
+                            "turns retained."
+                        )
+                        return False
+                    rolling_summary = generated
+
+                summary = rolling_summary
                 if not summary:
                     print("[Memory] ⚠️ Session summary returned no usable text; turns retained.")
                     return False

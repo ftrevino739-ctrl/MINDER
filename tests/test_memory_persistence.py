@@ -147,6 +147,31 @@ class MemoryPersistenceTests(unittest.TestCase):
             "Current summary",
         )
 
+    def test_session_log_batches_cover_long_sessions_without_dropping_turns(self):
+        original = [f"Turn {index}" for index in range(95)]
+
+        batches = memory_manager.chunk_session_log(original, max_entries=40)
+
+        self.assertEqual([len(batch) for batch in batches], [40, 40, 15])
+        self.assertEqual([turn for batch in batches for turn in batch], original)
+        self.assertEqual(original, [f"Turn {index}" for index in range(95)])
+
+    def test_session_log_batch_size_is_safely_bounded(self):
+        entries = [f"Turn {index}" for index in range(120)]
+
+        batches = memory_manager.chunk_session_log(entries, max_entries=1000)
+
+        self.assertEqual([len(batch) for batch in batches], [100, 20])
+
+    def test_session_log_batches_handle_empty_and_invalid_size(self):
+        self.assertEqual(memory_manager.chunk_session_log([]), [])
+        entries = ["one", "two", "three"]
+
+        self.assertEqual(
+            memory_manager.chunk_session_log(entries, max_entries="invalid"),
+            [["one", "two", "three"]],
+        )
+
     def test_saved_session_snapshot_consumes_only_saved_prefix(self):
         session_log = ["User: first request", "MINDER: first answer"]
         saved_snapshot = list(session_log)
