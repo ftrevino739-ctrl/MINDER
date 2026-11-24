@@ -52,7 +52,7 @@ from google.genai import types
 from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
-    save_session_summary, pop_last_session,
+    save_session_summary, peek_last_session, consume_last_session,
     search_memory, set_trim_notifier, consume_saved_session_entries,
 )
 
@@ -2071,8 +2071,9 @@ class JarvisLive:
                        if lang else "")
         name_clause = f" Address the user as {name}." if name else ""
 
-        # Inject last session context if available — pop removes it so it's never repeated
-        last = await asyncio.to_thread(pop_last_session)
+        # Read last session context without consuming it. It is acknowledged
+        # only after the greeting turn completes successfully.
+        last = await asyncio.to_thread(peek_last_session)
         session_clause = ""
         if last:
             try:
@@ -2114,6 +2115,14 @@ class JarvisLive:
                     try:
                         await asyncio.wait_for(self._turn_done_event.wait(), timeout=6.0)
                         turn_waited = True
+                        if last:
+                            acknowledged = await asyncio.to_thread(
+                                consume_last_session, last,
+                            )
+                            if not acknowledged:
+                                self.ui.write_log(
+                                    "SYS: Previous-session context changed before it could be acknowledged."
+                                )
                     except asyncio.TimeoutError:
                         pass
 

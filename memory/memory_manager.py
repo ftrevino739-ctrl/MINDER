@@ -549,6 +549,39 @@ def consume_saved_session_entries(session_log: list[str],
     return True
 
 
+def peek_last_session() -> dict | None:
+    """Read the newest session summary without consuming it."""
+    with _lock:
+        memory = load_memory()
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list) or not sessions:
+            return None
+        entry = sessions[-1]
+        return dict(entry) if isinstance(entry, dict) else None
+
+
+def consume_last_session(expected_entry: dict) -> bool:
+    """Consume the exact summary previously shown in a completed briefing.
+
+    Search from newest to oldest so a concurrently appended newer summary is
+    preserved. If the expected entry is no longer present, leave memory alone.
+    """
+    if not isinstance(expected_entry, dict):
+        return False
+    with _lock:
+        memory = load_memory()
+        sessions = memory.get("sessions", [])
+        if not isinstance(sessions, list) or not sessions:
+            return False
+        for index in range(len(sessions) - 1, -1, -1):
+            if sessions[index] == expected_entry:
+                del sessions[index]
+                memory["sessions"] = sessions
+                _write_memory_file(memory)
+                return True
+        return False
+
+
 def pop_last_session() -> dict | None:
     """
     Return AND remove the most recent session entry.

@@ -111,6 +111,42 @@ class MemoryPersistenceTests(unittest.TestCase):
         self.assertIn("relationships/sister: Mi hermana vive cerca", result)
         self.assertNotIn("notes/family note:", result)
 
+    def test_peek_last_session_does_not_consume_summary(self):
+        memory_manager.save_session_summary("Previous session summary", "Spanish")
+
+        first = memory_manager.peek_last_session()
+        second = memory_manager.peek_last_session()
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["summary"], "Previous session summary")
+        self.assertEqual(len(memory_manager.load_memory()["sessions"]), 1)
+
+    def test_consume_last_session_removes_expected_entry_not_newer_summary(self):
+        memory_manager.save_session_summary("Previous session summary", "Spanish")
+        expected = memory_manager.peek_last_session()
+        memory_manager.save_session_summary("Newer session summary", "Spanish")
+
+        consumed = memory_manager.consume_last_session(expected)
+
+        self.assertTrue(consumed)
+        sessions = memory_manager.load_memory()["sessions"]
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["summary"], "Newer session summary")
+
+    def test_consume_last_session_keeps_memory_when_entry_is_missing(self):
+        memory_manager.save_session_summary("Current summary", "Spanish")
+
+        consumed = memory_manager.consume_last_session({
+            "date": "2000-01-01",
+            "summary": "missing",
+        })
+
+        self.assertFalse(consumed)
+        self.assertEqual(
+            memory_manager.peek_last_session()["summary"],
+            "Current summary",
+        )
+
     def test_saved_session_snapshot_consumes_only_saved_prefix(self):
         session_log = ["User: first request", "MINDER: first answer"]
         saved_snapshot = list(session_log)
