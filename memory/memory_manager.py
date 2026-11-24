@@ -374,7 +374,7 @@ def _search_tokens(value: str) -> list[str]:
     """
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
     text = "".join(char for char in text if not unicodedata.combining(char))
-    return re.findall(r"[^\\W_]+", text, flags=re.UNICODE)
+    return re.findall(r"[^\W_]+", text, flags=re.UNICODE)
 
 
 def _score(query_words: list[str], cat: str, key: str, value: str) -> int:
