@@ -95,5 +95,36 @@ class MemoryPersistenceTests(unittest.TestCase):
         self.assertEqual(memory_manager.search_memory("temporary_note"), "Nothing stored about 'temporary_note'.")
 
 
+    def test_memory_search_ignores_accents_and_case(self):
+        memory_manager.remember("cancion_favorita", "Música para estudiar", "preferences")
+
+        result = memory_manager.search_memory("MUSICA")
+
+        self.assertIn("preferences/cancion favorita: Música para estudiar", result)
+
+    def test_memory_search_matches_whole_words_not_substrings(self):
+        memory_manager.remember("family_note", "La familia es importante", "notes")
+        memory_manager.remember("sister", "Mi hermana vive cerca", "relationships")
+
+        result = memory_manager.search_memory("mi")
+
+        self.assertIn("relationships/sister: Mi hermana vive cerca", result)
+        self.assertNotIn("notes/family note:", result)
+
+    def test_memory_search_limits_invalid_or_excessive_result_counts(self):
+        for index in range(60):
+            memory_manager.remember(f"project_{index}", "MINDER development", "projects")
+
+        self.assertEqual(
+            memory_manager.search_memory("", limit="invalid").count("projects/"),
+            8,
+        )
+        self.assertEqual(
+            memory_manager.search_memory("", limit=1000).count("projects/"),
+            50,
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()
