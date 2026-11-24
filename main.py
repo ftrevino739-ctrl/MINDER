@@ -665,7 +665,7 @@ class JarvisLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
-        self._summary_in_progress = False           # one summary writer per event loop
+        self._summary_lock: asyncio.Lock | None = None  # serialise reconnect and shutdown saves
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
@@ -2173,61 +2173,62 @@ class JarvisLive:
     async def _save_session_summary(self) -> bool:
         """Persist a summary before consuming the turns it represents.
 
-        Keep the source turns until both generation and disk persistence have
-        succeeded. New turns may arrive while the provider runs; after saving,
-        consume only the exact snapshot that was summarised.
+        A reconnect and a shutdown can request a save at nearly the same time.
+        They share one async lock: the second caller waits for the first, then
+        rechecks the remaining log instead of racing or exiting mid-write.
         """
-        if self._summary_in_progress:
-            return False
-        log_snapshot = list(self._session_log)
-        if len(log_snapshot) < 3:  # need at least one exchange to be worth saving
-            return False
+        # Create the lock lazily on the owning asyncio loop. JarvisLive itself
+        # is constructed just before asyncio.run() starts that loop.
+        if self._summary_lock is None:
+            self._summary_lock = asyncio.Lock()
 
-        self._summary_in_progress = True
-        try:
-            memory = load_memory()
-            identity = memory.get("identity", {}) if isinstance(memory, dict) else {}
-            if not isinstance(identity, dict):
-                identity = {}
-            lang_entry = identity.get("language", {})
-            lang = (
-                lang_entry.get("value", "")
-                if isinstance(lang_entry, dict)
-                else str(lang_entry)
-            ).strip()
-            lang = lang or "English"
-
-            convo = "\n".join(log_snapshot[-40:])  # cap provider input to last 40 turns
-            prompt = (
-                f"Summarize this conversation in 1-2 sentences in {lang}. "
-                "Focus on what the user accomplished or discussed. "
-                "Output ONLY the summary text, nothing else:\n\n" + convo
-            )
-
-            from core import gemini
-            summary = await asyncio.to_thread(
-                gemini.text, prompt, gemini.SMART, None, 30_000,
-            )
-            summary = str(summary or "").strip()
-            if not summary:
-                print("[Memory] ⚠️ Session summary returned no usable text; turns retained.")
+        async with self._summary_lock:
+            log_snapshot = list(self._session_log)
+            if len(log_snapshot) < 3:  # need at least one exchange to be worth saving
                 return False
 
-            # File I/O is kept off the asyncio/Qt-facing event loop. A raised
-            # write error leaves the source turns available for a later retry.
-            await asyncio.to_thread(save_session_summary, summary, lang)
-            if not consume_saved_session_entries(self._session_log, log_snapshot):
-                print(
-                    "[Memory] ⚠️ Saved summary, but the source log changed; "
-                    "retaining the current turns to avoid deleting unsummarised data."
+            try:
+                memory = load_memory()
+                identity = memory.get("identity", {}) if isinstance(memory, dict) else {}
+                if not isinstance(identity, dict):
+                    identity = {}
+                lang_entry = identity.get("language", {})
+                lang = (
+                    lang_entry.get("value", "")
+                    if isinstance(lang_entry, dict)
+                    else str(lang_entry)
+                ).strip()
+                lang = lang or "English"
+
+                convo = "\n".join(log_snapshot[-40:])  # cap provider input to last 40 turns
+                prompt = (
+                    f"Summarize this conversation in 1-2 sentences in {lang}. "
+                    "Focus on what the user accomplished or discussed. "
+                    "Output ONLY the summary text, nothing else:\n\n" + convo
                 )
+
+                from core import gemini
+                summary = await asyncio.to_thread(
+                    gemini.text, prompt, gemini.SMART, None, 30_000,
+                )
+                summary = str(summary or "").strip()
+                if not summary:
+                    print("[Memory] ⚠️ Session summary returned no usable text; turns retained.")
+                    return False
+
+                # File I/O is kept off the asyncio/Qt-facing event loop. A raised
+                # write error leaves the source turns available for a later retry.
+                await asyncio.to_thread(save_session_summary, summary, lang)
+                if not consume_saved_session_entries(self._session_log, log_snapshot):
+                    print(
+                        "[Memory] ⚠️ Saved summary, but the source log changed; "
+                        "retaining the current turns to avoid deleting unsummarised data."
+                    )
+                    return False
+                return True
+            except Exception as e:
+                print(f"[Memory] ⚠️ Session summary failed; turns retained for retry: {e}")
                 return False
-            return True
-        except Exception as e:
-            print(f"[Memory] ⚠️ Session summary failed; turns retained for retry: {e}")
-            return False
-        finally:
-            self._summary_in_progress = False
 
     # ── System monitor ──────────────────────────────────────────────────────────
 
