@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from datetime import datetime
 from threading import RLock
 from pathlib import Path
@@ -365,23 +366,50 @@ def format_memory_for_prompt(memory: dict | None) -> str:
 
 # ── Recall ────────────────────────────────────────────────────────────────────
 
+def _search_tokens(value: str) -> list[str]:
+    """Tokenise case- and accent-insensitively without matching inside words.
+
+    NFKD makes Spanish queries such as 'musica' find 'música'. Underscores are
+    treated as separators so memory keys use the same matching rules as prose.
+    """
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.findall(r"[^\\W_]+", text, flags=re.UNICODE)
+
+
 def _score(query_words: list[str], cat: str, key: str, value: str) -> int:
-    """Cheap lexical relevance. No embeddings, no network, no model call - this
-    runs in well under a millisecond, which is the entire point: recall must
-    cost one model round trip, never two."""
-    hay_key = _pretty(key).lower()
-    hay_val = value.lower()
-    score   = 0
-    for w in query_words:
-        if not w:
+    """Cheap lexical relevance with whole-token and conservative prefix matches.
+
+    No embeddings, network, or model call: recall stays a local lookup and costs
+    only the model round trip needed to decide which fact to retrieve.
+    """
+    key_tokens = _search_tokens(_pretty(key))
+    value_tokens = _search_tokens(value)
+    cat_tokens = _search_tokens(cat)
+    score = 0
+
+    # Reward a multi-word phrase only when it occurs as consecutive tokens.
+    width = len(query_words)
+    if width > 1:
+        for haystack, weight in ((key_tokens, 12), (value_tokens, 8)):
+            if any(haystack[i:i + width] == query_words
+                   for i in range(len(haystack) - width + 1)):
+                score += weight
+
+    for word in query_words:
+        if not word:
             continue
-        if w == hay_key:
+        if word in key_tokens:
             score += 10
-        elif w in hay_key:
-            score += 6
-        if w in hay_val:
-            score += 3
-        if w in cat:
+        elif len(word) >= 4 and any(token.startswith(word) for token in key_tokens):
+            score += 5
+
+        if word in value_tokens:
+            score += 4
+        elif len(word) >= 4 and any(token.startswith(word) for token in value_tokens):
+            score += 2
+
+        if word in cat_tokens:
             score += 1
     return score
 
@@ -389,10 +417,18 @@ def _score(query_words: list[str], cat: str, key: str, value: str) -> int:
 def search_memory(query: str, limit: int = 8) -> str:
     """Find stored facts matching `query`. Backs the recall_memory tool.
 
-    An empty query is treated as "show me everything you know", capped - the
-    model asks that when the user says "what do you remember about me?"."""
+    Matching ignores accents and case, respects word boundaries, and supports
+    conservative prefixes for inflected words. An empty query returns a capped
+    overview, as requested by the assistant when asked what it remembers.
+    """
     memory = load_memory()
-    words  = [w for w in re.split(r"[^\w]+", (query or "").lower()) if len(w) > 1]
+    query_text = str(query or "").strip()
+    words = _search_tokens(query_text)
+
+    try:
+        result_limit = max(1, min(int(limit), 50))
+    except (TypeError, ValueError, OverflowError):
+        result_limit = 8
 
     rows: list[tuple[int, str, str, str]] = []
     for cat, items in memory.items():
@@ -402,22 +438,24 @@ def search_memory(query: str, limit: int = 8) -> str:
             val = _entry_value(entry)
             if not val:
                 continue
-            s = _score(words, cat, key, val) if words else 1
-            if s > 0:
-                rows.append((s, cat, key, val))
+            score = _score(words, cat, key, val) if words else 1
+            if score > 0:
+                rows.append((score, cat, key, val))
 
     if not rows:
-        return (f"Nothing stored about '{query}'." if query
+        return (f"Nothing stored about '{query_text}'." if query_text
                 else "I have not stored anything about this person yet.")
 
-    rows.sort(key=lambda r: (-r[0], r[2]))
-    lines = [f"{cat}/{_pretty(key)}: {val}" for _s, cat, key, val in rows[:max(1, limit)]]
-    head  = (f"Stored facts matching '{query}':" if query
-             else "Everything currently stored:")
-    more  = (f"\n(+{len(rows) - len(lines)} more — search with a narrower keyword)"
-             if len(rows) > len(lines) else "")
+    rows.sort(key=lambda row: (-row[0], row[2].casefold()))
+    lines = [
+        f"{cat}/{_pretty(key)}: {val}"
+        for _score_value, cat, key, val in rows[:result_limit]
+    ]
+    head = (f"Stored facts matching '{query_text}':" if query_text
+            else "Everything currently stored:")
+    more = (f"\n(+{len(rows) - len(lines)} more — search with a narrower keyword)"
+            if len(rows) > len(lines) else "")
     return head + "\n" + "\n".join(lines) + more
-
 
 def all_entries_for_ui() -> list[dict]:
     """Flat list for the memory panel: what JARVIS knows, and when it learned it.
