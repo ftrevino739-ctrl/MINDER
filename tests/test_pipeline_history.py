@@ -24,6 +24,26 @@ class PipelineHistoryTests(unittest.TestCase):
         self.assertIn("truncated", messages[0]["content"].lower())
         self.assertLessEqual(len(messages[0]["content"]), 120)
 
+    def test_oversized_latest_tool_result_keeps_its_assistant_tool_call(self):
+        engine = PipelineEngine(HistoryLLM(), history_chars=180)
+        engine._history = [
+            {"role": "user", "content": "Run the operation."},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call-1", "type": "function",
+                 "function": {"name": "read_file", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "call-1",
+             "name": "read_file", "content": "file output " * 80},
+        ]
+
+        messages = engine._trimmed()
+
+        self.assertEqual(len(messages), 2)
+        self.assertTrue(messages[0].get("tool_calls"))
+        self.assertEqual(messages[0]["tool_calls"][0]["id"], "call-1")
+        self.assertEqual(messages[1]["tool_call_id"], "call-1")
+        self.assertIn("truncated", messages[1]["content"].lower())
+
     def test_recent_exchange_is_preserved_when_older_history_exceeds_budget(self):
         engine = PipelineEngine(HistoryLLM(), history_chars=100)
         engine._history = [

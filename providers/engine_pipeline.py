@@ -256,7 +256,21 @@ class PipelineEngine:
             # trimmed it too and sent an empty conversation to the provider.
             # Keep the newest entry and trim only its oldest content, retaining
             # structural fields such as tool_call_id and name.
-            latest = dict(self._history[-1])
+            start = len(self._history) - 1
+            if self._history[start].get("role") == "tool":
+                # A tool result without the assistant's matching tool-call
+                # request is invalid chat history. Retain the whole latest
+                # tool exchange as one unit when the result alone exceeds the
+                # budget.
+                while start >= 0 and self._history[start].get("role") == "tool":
+                    start -= 1
+                if start >= 0 and self._history[start].get("tool_calls"):
+                    pass
+                else:
+                    start = len(self._history) - 1
+
+            latest_messages = [dict(item) for item in self._history[start:]]
+            latest = latest_messages[-1]
             content = latest.get("content")
             if isinstance(content, str):
                 try:
@@ -265,12 +279,15 @@ class PipelineEngine:
                     budget = _DEFAULT_HISTORY_CHARS
                 empty = dict(latest)
                 empty["content"] = ""
-                overhead = len(json.dumps(empty, ensure_ascii=False))
+                overhead = sum(
+                    len(json.dumps(item, ensure_ascii=False))
+                    for item in latest_messages[:-1]
+                ) + len(json.dumps(empty, ensure_ascii=False))
                 marker = "[Earlier content truncated to fit the model context budget.]\n"
                 available = max(1, budget - overhead - len(marker))
                 if len(content) > available:
                     latest["content"] = marker + content[-available:]
-            return [latest]
+            return latest_messages
 
         return self._history[cut:]
 
