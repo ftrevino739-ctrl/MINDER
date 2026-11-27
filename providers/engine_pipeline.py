@@ -266,7 +266,7 @@ class PipelineEngine:
                 empty = dict(latest)
                 empty["content"] = ""
                 overhead = len(json.dumps(empty, ensure_ascii=False))
-                marker = "[Earlier content truncated to fit the model context budget.]\\n"
+                marker = "[Earlier content truncated to fit the model context budget.]\n"
                 available = max(1, budget - overhead - len(marker))
                 if len(content) > available:
                     latest["content"] = marker + content[-available:]
