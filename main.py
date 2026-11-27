@@ -1805,11 +1805,9 @@ class JarvisLive:
                                 self._last_user_speech = time.monotonic()
 
                         if sc.turn_complete:
-                            if self._turn_done_event:
-                                self._turn_done_event.set()
-
                             # If this turn_complete ends an interrupted response, clear the
-                            # flag and skip all further processing for that turn.
+                            # flag and skip all further processing for that turn. It must NOT
+                            # acknowledge a startup briefing: the greeting was cancelled.
                             if self._interrupted:
                                 with self._tool_dispatch_lock:
                                     self._interrupted = False
@@ -1817,6 +1815,11 @@ class JarvisLive:
                                 out_buf = []
                                 self._visemes.reset()
                                 continue
+
+                            # Signal only after the interrupted-turn guard. The startup
+                            # briefing uses this event as its durable-memory acknowledgement.
+                            if self._turn_done_event:
+                                self._turn_done_event.set()
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
