@@ -249,6 +249,29 @@ class PipelineEngine:
                 break
         while cut < len(self._history) and self._history[cut].get("role") == "tool":
             cut += 1
+
+        if cut >= len(self._history) and self._history:
+            # The newest message is the one the model must answer. If that
+            # single message is larger than the entire budget, the old logic
+            # trimmed it too and sent an empty conversation to the provider.
+            # Keep the newest entry and trim only its oldest content, retaining
+            # structural fields such as tool_call_id and name.
+            latest = dict(self._history[-1])
+            content = latest.get("content")
+            if isinstance(content, str):
+                try:
+                    budget = max(1, int(self._history_chars))
+                except (TypeError, ValueError, OverflowError):
+                    budget = _DEFAULT_HISTORY_CHARS
+                empty = dict(latest)
+                empty["content"] = ""
+                overhead = len(json.dumps(empty, ensure_ascii=False))
+                marker = "[Earlier content truncated to fit the model context budget.]\\n"
+                available = max(1, budget - overhead - len(marker))
+                if len(content) > available:
+                    latest["content"] = marker + content[-available:]
+            return [latest]
+
         return self._history[cut:]
 
     # ── the four methods main.py calls ───────────────────────────────────────
